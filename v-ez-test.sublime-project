@@ -18,7 +18,7 @@
         },
         {
             "name": "Run",
-            "cmd": ["./zig-cache/bin/v-ez-test"],
+            "cmd": ["zig", "run"],
             "working_dir": "$project_path"
         }
     ]

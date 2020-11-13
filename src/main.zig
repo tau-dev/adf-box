@@ -1,11 +1,17 @@
 const std = @import("std");
-const c = @cImport({
+const base = @import("base.zig");
+const c = base.c;
+const vk = base.vk;
+const vez = base.vez;
+const convert = base.convert;
+const VulkanError = base.VulkanError;
+const stbi = @cImport({
     @cInclude("VEZ.h");
-    // @cDefine("GLFW_INCLUDE_VULKAN", "1");
-    @cInclude("GLFW/glfw3.h");
 });
-const Allocator = std.mem.Allocator;
-const NameSet = std.AutoHashMap([256]u8, void);
+
+const mat = @import("zalgebra");
+const mat4 = mat.mat4;
+const vec = mat.vec3;
 
 const Vertex = struct {
     x: f32,
@@ -18,7 +24,14 @@ const Vertex = struct {
     v: f32,
 };
 
-const mat4 = [4][4]f32;
+//[4][4]f32;
+
+var id = mat4.identity(); // [4][4]f32{
+//     .{ 1, 0, 0, 0 },
+//     .{ 0, 1, 0, 0 },
+//     .{ 0, 0, 1, 0 },
+//     .{ 0, 0, 0, 1 },
+// };
 
 const UniformBuffer = struct {
     model: mat4,
@@ -26,446 +39,423 @@ const UniformBuffer = struct {
     projection: mat4,
 };
 
-const WIDTH = 600;
-const HEIGHT = 400;
-const NAME = "Test the West!";
-
-const manageFramebuffer = true;
-const sampleCountFlag = .VK_SAMPLE_COUNT_1_BIT;
-const enableValidationLayers = true;
-const validation = "VK_LAYER_KHRONOS_validation"; //"VK_LAYER_LUNARG_standard_validation";
-fn extendName(comptime name: []const u8) [256]u8 {
-    var x = [1]u8{0} ** 256;
-    var i: usize = 0;
-    while (i < 256 and i < name.len) : (i += 1) {
-        x[i] = name[i];
-    }
-    return x;
-}
-// const validationName = validation.* ++ [_]u8{0} ** (256 - validation.len);
-const map_ident = c.VkComponentMapping{
-    .r = .VK_COMPONENT_SWIZZLE_IDENTITY,
-    .g = .VK_COMPONENT_SWIZZLE_IDENTITY,
-    .b = .VK_COMPONENT_SWIZZLE_IDENTITY,
-    .a = .VK_COMPONENT_SWIZZLE_IDENTITY,
+const Buffer = struct {
+    handle: vk.Buffer, memory: vk.DeviceMemory
 };
 
-const stdout = std.io.getStdOut().outStream();
-
-var window: *c.GLFWwindow = undefined;
-var instance: c.VkInstance = undefined;
-var physicalDevice: c.VkPhysicalDevice = null;
-var surface: c.VkSurfaceKHR = null;
-var device: c.VkDevice = null;
-var swapchain: c.VezSwapchain = null;
-var framebuffer = FrameBuffer{};
-const FrameBuffer = struct {
-    colorImage: c.VkImage = null,
-    colorImageView: c.VkImageView = null,
-    depthStencilImage: c.VkImage = null,
-    depthStencilImageView: c.VkImageView = null,
-    handle: c.VezFramebuffer = null,
-
-    /// Free previous allocations.
-    fn deinit(self: FrameBuffer, dev: c.VkDevice) void {
-        if (framebuffer.handle) |hndl| {
-            c.vezDestroyFramebuffer(dev, self.handle);
-            c.vezDestroyImageView(dev, self.colorImageView);
-            c.vezDestroyImageView(dev, self.depthStencilImageView);
-            c.vezDestroyImage(dev, self.colorImage);
-            c.vezDestroyImage(dev, self.depthStencilImage);
-        }
-    }
+const PipelineDesc = struct {
+    pipeline: vez.Pipeline = null,
+    shaderModules: std.ArrayList(vk.ShaderModule),
 };
 
-// abstracc
+var graphicsQueue: vk.Queue = null;
+var vertexBuffer = Buffer{ .handle = null, .memory = null };
+var indexBuffer = Buffer{ .handle = null, .memory = null };
+var image: vk.Image = null;
+var imageView: vk.ImageView = null;
+var sampler: vk.Sampler = null;
+var uniformBuffer: vk.Buffer = null;
+var basicPipeline: PipelineDesc = undefined;
+var commandBuffer: vk.CommandBuffer = null;
 
-fn MakeVkVersion(major: u32, minor: var, patch: var) u32 {
-    return (major << 22) | ((minor << 12) | patch);
-}
+const allocator = std.heap.c_allocator;
 
-fn convert(result: c.VkResult) !void {
-    return switch (result) {
-        .VK_SUCCESS => return,
-        .VK_INCOMPLETE => error.VulkanIncomplete,
-        .VK_ERROR_OUT_OF_HOST_MEMORY => error.OutOfHostMemory,
-        .VK_ERROR_OUT_OF_DEVICE_MEMORY => error.OutOfDeviceMemory,
-        else => error.Unknown,
-    };
-}
-
-fn fail(msg: []const u8) void {
-    stdout.print("Error: {}\n", .{msg}) catch |err| @panic("Faild to emit error");
-}
-
-// fn check(result: c.VkResult) void {
-//     toError(result) catch |err| {
-//         stdout.print("Vulkan Error: r) |own|
-//             c.glfwSetWindowPos(wndw, owner_x + (owner_width >> 1) - width, owner_y + (owner_height >> 1) - height);
-//     }
-// }
-
-// Additional abstractions
-
-fn getInstanceLayers(allocator: *Allocator) !NameSet {
-    // Enumerate all available instance availableLayers.
-    var layerCount: u32 = 0;
-    try convert(c.vkEnumerateInstanceLayerProperties(&layerCount, null));
-
-    var layerProperties = try allocator.alloc(c.VkLayerProperties, layerCount);
-    defer allocator.free(layerProperties);
-
-    try convert(c.vkEnumerateInstanceLayerProperties(&layerCount, layerProperties.ptr));
-    var set = NameSet.init(allocator);
-    for (layerProperties) |prop| {
-        try stdout.print("{}\n", .{prop.layerName});
-        _ = try set.put(prop.layerName, .{});
-    }
-    return set;
-}
-
-fn CreateFramebuffer() !void {
-    framebuffer.deinit(device);
-
-    // Get the current window dimension.
-    var width: u32 = undefined;
-    var height: u32 = undefined;
-    c.glfwGetWindowSize(window, @ptrCast(*i32, &width), @ptrCast(*i32, &height));
-
-    // Get the swapchain's current surface format.
-    var swapchainFormat: c.VkSurfaceFormatKHR = undefined;
-    c.vezGetSwapchainSurfaceFormat(swapchain, &swapchainFormat);
-
-    // Create the color image for the framebuffer.
-    var imageCreateInfo = c.VezImageCreateInfo{
-        .pNext = null,
-        .flags = 0,
-        .imageType = .VK_IMAGE_TYPE_2D,
-        .format = swapchainFormat.format,
-        .extent = .{ .width = width, .height = height, .depth = 1 },
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = sampleCountFlag,
-        .tiling = .VK_IMAGE_TILING_OPTIMAL,
-        .usage = c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = null,
-    };
-    try convert(c.vezCreateImage(device, c.VEZ_MEMORY_GPU_ONLY, &imageCreateInfo, &framebuffer.colorImage));
-
-    // Create the image view for binding the texture as a resource.
-    var imageViewCreateInfo = c.VezImageViewCreateInfo{
-        .pNext = null,
-        .components = map_ident,
-        .image = framebuffer.colorImage,
-        .viewType = .VK_IMAGE_VIEW_TYPE_2D,
-        .format = imageCreateInfo.format,
-        .subresourceRange = c.VezImageSubresourceRange{
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-    try convert(c.vezCreateImageView(device, &imageViewCreateInfo, &framebuffer.colorImageView));
-
-    // Create the depth image for the m_framebuffer.
-    imageCreateInfo.imageType = .VK_IMAGE_TYPE_2D;
-    imageCreateInfo.format = .VK_FORMAT_D32_SFLOAT;
-    imageCreateInfo.extent = c.VkExtent3D{ .width = width, .height = height, .depth = 1 };
-    imageCreateInfo.mipLevels = 1;
-    imageCreateInfo.arrayLayers = 1;
-    imageCreateInfo.samples = sampleCountFlag;
-    imageCreateInfo.tiling = .VK_IMAGE_TILING_OPTIMAL;
-    imageCreateInfo.usage = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    try convert(c.vezCreateImage(device, c.VEZ_MEMORY_GPU_ONLY, &imageCreateInfo, &framebuffer.depthStencilImage));
-
-    // Create the image view for binding the texture as a resource.
-    imageViewCreateInfo.image = framebuffer.depthStencilImage;
-    imageViewCreateInfo.viewType = .VK_IMAGE_VIEW_TYPE_2D;
-    imageViewCreateInfo.format = imageCreateInfo.format;
-    imageViewCreateInfo.subresourceRange.layerCount = 1;
-    imageViewCreateInfo.subresourceRange.levelCount = 1;
-    try convert(c.vezCreateImageView(device, &imageViewCreateInfo, &framebuffer.depthStencilImageView));
-
-    // Create the m_framebuffer.
-    var attachments: []c.VkImageView = &[_]c.VkImageView{ framebuffer.colorImageView, framebuffer.depthStencilImageView };
-    const framebufferCreateInfo = c.VezFramebufferCreateInfo{
-        .pNext = null,
-        .attachmentCount = @intCast(u32, attachments.len),
-        .pAttachments = attachments.ptr,
-        .width = width,
-        .height = height,
-        .layers = 1,
-    };
-    try convert(c.vezCreateFramebuffer(device, &framebufferCreateInfo, &framebuffer.handle));
-}
-
-fn SetWindowCenter(wndw: *c.GLFWwindow) !void {
-    // Get window position and size
-    var posX: i32 = undefined;
-    var posY: i32 = undefined;
-    c.glfwGetWindowPos(wndw, &posX, &posY);
-
-    var width: i32 = undefined;
-    var height: i32 = undefined;
-    c.glfwGetWindowSize(wndw, &width, &height);
-
-    // Halve the window size and use it to adjust the window position to the center of the window
-    width >>= 1;
-    height >>= 1;
-
-    posX += width;
-    posY += height;
-
-    // Get the list of monitors
-    var count: i32 = undefined;
-    var monitors: []?*c.GLFWmonitor = (c.glfwGetMonitors(&count) orelse return)[0..@intCast(usize, count)];
-    try stdout.print("{}\n", .{count});
-    // Figure out which monitor the window is in
-    var owner: ?*c.GLFWmonitor = null;
-    var owner_x: i32 = undefined;
-    var owner_y: i32 = undefined;
-    var owner_width: i32 = undefined;
-    var owner_height: i32 = undefined;
-
-    var i: usize = 0;
-    while (i < count) : (i += 1) {
-        // Get the monitor position
-        var monitor_x: i32 = undefined;
-        var monitor_y: i32 = undefined;
-        if (monitors[i] == null) {
-            @panic("ono");
-        }
-        c.glfwGetMonitorPos(monitors[i], &monitor_x, &monitor_y);
-
-        // Get the monitor size from its video mode
-        var monitor_width: i32 = undefined;
-        var monitor_height: i32 = undefined;
-        var monitor_vidmode: *const c.GLFWvidmode = c.glfwGetVideoMode(monitors[i]) orelse continue;
-
-        monitor_width = monitor_vidmode.width;
-        monitor_height = monitor_vidmode.height;
-
-        // Set the owner to this monitor if the center of the window is within its bounding box
-        if ((posX > monitor_x and posX < (monitor_x + monitor_width)) and (posY > monitor_y and posY < (monitor_y + monitor_height))) {
-            owner = monitors[i];
-            owner_x = monitor_x;
-            owner_y = monitor_y;
-            owner_width = monitor_width;
-            owner_height = monitor_height;
-        }
-    }
-
-    // Set the window position to the center of the owner monitor
-    if (owner) |own| {
-        c.glfwSetWindowPos(wndw, owner_x + (owner_width >> 1) - width, owner_y + (owner_height >> 1) - height);
+fn bytewiseCopy(comptime T: type, data: []const T, dest: [*]u8) void {
+    for (@ptrCast([*]const u8, data.ptr)[0..(data.len * @sizeOf(T))]) |byte, i| {
+        dest[i] = byte;
     }
 }
 
-fn props(dev: c.VkPhysicalDevice) c.VkPhysicalDeviceProperties {
-    var properties: c.VkPhysicalDeviceProperties = undefined;
-    c.vezGetPhysicalDeviceProperties(dev, &properties);
-    return properties;
+fn findMemoryType(physicalDevice: vk.PhysicalDevice, typeFilter: u32, properties: vk.MemoryPropertyFlags) u32 {
+    var memProperties: vk.PhysicalDeviceMemoryProperties = undefined;
+    vk.vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+    var i: u5 = 0;
+    const mask: u32 = 1;
+    while (i < memProperties.memoryTypeCount) : (i += 1) {
+        if (typeFilter & (mask << i) != 0 and (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            return i;
+    }
+
+    return 0;
 }
 
 pub fn main() anyerror!void {
-    const allocator = std.heap.c_allocator;
-
-    var availableLayers = try getInstanceLayers(allocator);
-    defer availableLayers.deinit();
-
-    // Use glfw to check for Vulkan support.
-    if (c.glfwInit() != c.GLFW_TRUE) {
-        return error.CouldNotInitGlfw;
-    }
-
-    if (c.glfwVulkanSupported() != c.GLFW_TRUE) {
-        @panic("No Vulkan supported found on system!\n");
-    }
-
-    // // Initialize a Vulkan instance with the validation availableLayers enabled and extensions required by glfw.
-    var instanceExtensionCount: u32 = 0;
-    var instanceExtensions = c.glfwGetRequiredInstanceExtensions(&instanceExtensionCount);
-
-    var instanceLayers = std.ArrayList([*:0]const u8).init(allocator);
-    defer instanceLayers.deinit();
-
-    if (enableValidationLayers) {
-        if (availableLayers.contains(extendName(validation))) {
-            try instanceLayers.append(validation);
-        } else {
-            fail("No validation layer found!");
-        }
-    }
-
-    var result: c.VkResult = undefined;
-    var appInfo = c.VezApplicationInfo{
-        .pNext = null,
-        .pApplicationName = NAME,
-        .applicationVersion = MakeVkVersion(1, 0, 0),
-        .pEngineName = "testEngine",
-        .engineVersion = MakeVkVersion(0, 0, 0),
-    };
-    var createInfo = c.VezInstanceCreateInfo{
-        .pNext = null,
-        .pApplicationInfo = &appInfo,
-        .enabledLayerCount = @intCast(u32, instanceLayers.items.len),
-        .ppEnabledLayerNames = instanceLayers.items.ptr,
-        .enabledExtensionCount = instanceExtensionCount,
-        .ppEnabledExtensionNames = instanceExtensions,
-    };
-    try convert(c.vezCreateInstance(&createInfo, &instance));
-
-    // Enumerate all attached physical devices.
-    var physicalDeviceCount: u32 = 0;
-    try convert(c.vezEnumeratePhysicalDevices(instance, &physicalDeviceCount, null));
-    if (physicalDeviceCount == 0) {
-        fail("No vulkan physical devices found");
-    }
-    var physicalDevices = try allocator.alloc(c.VkPhysicalDevice, physicalDeviceCount);
-    defer allocator.free(physicalDevices);
-    try convert(c.vezEnumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.ptr));
-
-    for (physicalDevices) |pdevice| {
-        try stdout.print("{}\n", .{props(pdevice).deviceName});
-    }
-    physicalDevice = physicalDevices[0];
-    try stdout.print("Selected device: {}\n", .{props(physicalDevice).deviceName});
-
-    // Initialize a window using GLFW and hint no graphics API should be used on the backend.
-    c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
-    window = c.glfwCreateWindow(WIDTH, HEIGHT, NAME, null, null) orelse return error.FailedToCreateWindow;
-    try SetWindowCenter(window);
-
-    // Create a surface from the GLFW window handle.
-    try convert(c.glfwCreateWindowSurface(instance, window, null, &surface));
-
-    // Create the Vulkan device handle.
-    var deviceExtensions: []const [*:0]const u8 = &[_][*:0]const u8{c.VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-    var deviceCreateInfo = c.VezDeviceCreateInfo{
-        .pNext = null,
-        .enabledLayerCount = 0,
-        .ppEnabledLayerNames = null,
-        .enabledExtensionCount = @intCast(u32, deviceExtensions.len),
-        .ppEnabledExtensionNames = deviceExtensions.ptr,
-    };
-    try convert(c.vezCreateDevice(physicalDevice, &deviceCreateInfo, &device));
-
-    // Create the swapchain.
-    var swapchainCreateInfo = c.VezSwapchainCreateInfo{
-        .pNext = null,
-        .surface = surface,
-        .format = c.VkSurfaceFormatKHR{ .format = .VK_FORMAT_B8G8R8A8_UNORM, .colorSpace = .VK_COLOR_SPACE_SRGB_NONLINEAR_KHR },
-        .tripleBuffer = c.VK_TRUE,
-    };
-    try convert(c.vezCreateSwapchain(device, &swapchainCreateInfo, &swapchain));
-
-    // Set callbacks.
-    _ = c.glfwSetWindowSizeCallback(window, WindowSizeCallback);
-    // c.glfwSetCursorPosCallback(window, CursorPosCallback);
-    // c.glfwSetMouseButtonCallback(window, MouseButtonCallback);
-    // c.glfwSetScrollCallback(window, MouseScrollCallback);
-    // c.glfwSetKeyCallback(window, KeyCallback);
-
-    c.glfwShowWindow(window);
-
-    if (manageFramebuffer) {
-        try CreateFramebuffer();
-    }
-
-    initialize();
-
-    // // Track time elapsed from one Update call to the next.
-    // double lastTime = glfwGetTime();
-
-    // // Track fps.
-    // double elapsedTime = 0.0;
-    // uint32_t frameCount = 0;
-
-    // // Message loop.
-    // while (!glfwWindowShouldClose(m_window) && !m_quitSignaled)
-    // {
-    //     // Check for window messages to process.
-    //     glfwPollEvents();
-
-    //     // Update the application.
-    //     double curTime = glfwGetTime();
-    //     elapsedTime += curTime - lastTime;
-    //     Update(static_cast<float>(curTime - lastTime));
-    //     lastTime = curTime;
-
-    //     // Draw the application.
-    //     Draw();
-
-    //     // Display the fps in the window title bar.
-    //     ++frameCount;
-    //     if (elapsedTime >= 1.0)
-    //     {
-    //         std::string text = m_name + " " + std::to_string(frameCount) + " FPS";
-    //         if (m_windowTitleText.size() > 0)
-    //             text += "    (" + m_windowTitleText + ")";
-    //         glfwSetWindowTitle(m_window, text.c_str());
-    //         elapsedTime = 0.0;
-    //         frameCount = 0;
-    //     }
-    // }
-
-    // // Wait for all device operations to complete.
-    // vezDeviceWaitIdle(m_device);
-
-    cleanup();
-
-    if (manageFramebuffer) {
-        framebuffer.deinit(device);
-    }
-
-    c.vezDestroySwapchain(device, swapchain);
-    c.vezDestroyDevice(device);
-    c.vkDestroySurfaceKHR(instance, surface, null);
-    c.vezDestroyInstance(instance);
-    std.time.sleep(100000000);
+    try base.run(allocator, .{
+        .name = "V-EZ-Test",
+        .initialize = initialize,
+        .cleanup = cleanup,
+        .draw = draw,
+        .onResize = onResize,
+        .update = update,
+    });
 }
 
-export fn WindowSizeCallback(wndw: ?*c.GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
-    // auto itr = appBaseInstances.find(window);
-    // if (itr != appBaseInstances.end())
-    // {
-    //     // Wait for device to be idle.
-    //     vkDeviceWaitIdle(itr->second->GetDevice());
-
-    //     // Re-create the framebuffer.
-    //     if (itr->second->m_manageFramebuffer)
-    //         itr->second->CreateFramebuffer();
-
-    //     // Now inform application of resize event.
-    //     itr->second->OnResize(width, height);
-    // }
+fn initialize() !void {
+    try createQuad();
+    try createTexture();
+    try createSampler();
+    try createUniformBuffer();
+    try createPipeline();
+    try createCommandBuffer();
 }
 
-fn initialize() void {
-    CreateQuad();
-    // CreateTexture();
-    // CreateSampler();
-    // CreateUniformBuffer();
-    // CreatePipeline();
-    // CreateCommandBuffer();
+fn cleanup() !void {
+    var device = base.getDevice();
+    vez.vezDestroyBuffer(device, vertexBuffer.handle);
+    vk.vkFreeMemory(device, vertexBuffer.memory, null);
+    vez.vezDestroyBuffer(device, indexBuffer.handle);
+    vk.vkFreeMemory(device, indexBuffer.memory, null);
+    vez.vezDestroyImageView(device, imageView);
+    vez.vezDestroyImage(device, image);
+    vez.vezDestroySampler(device, sampler);
+    vez.vezDestroyBuffer(device, uniformBuffer);
+
+    vez.vezDestroyPipeline(device, basicPipeline.pipeline);
+    for (basicPipeline.shaderModules.items) |shaderModule| {
+        vez.vezDestroyShaderModule(device, shaderModule);
+    }
+
+    vez.vezFreeCommandBuffers(device, 1, &commandBuffer);
 }
 
-fn cleanup() void {
-    c.vezDestroyBuffer(device, vertexBuffer.handle);
-    c.vkFreeMemory(device, vertexBuffer.memory, null);
-    c.vezDestroyBuffer(device, indexBuffer.handle);
-    c.vkFreeMemory(device, indexBuffer.memory, null);
-    // c.vezDestroyImageView(device, imageView);
-    // c.vezDestroyImage(device, image);
-    // c.vezDestroySampler(device, sampler);
-    // c.vezDestroyBuffer(device, uniformBuffer);
+fn draw() !void {
+    // Request a wait semaphore to pass to present so it waits for rendering to complete.
+    var semaphore: vk.Semaphore = null;
 
-    // c.vezDestroyPipeline(device, m_basicPipeline.pipeline);
-    // for (basicPipeline.shaderModules) |shaderModule| {
-    //     c.vezDestroyShaderModule(device, shaderModule);
-    // }
+    const submitInfo = vez.SubmitInfo{
+        .pNext = null,
+        .waitSemaphoreCount = 0, // default
+        .pWaitSemaphores = null, // default
+        .pWaitDstStageMask = null, // default
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &semaphore,
+    };
+    try convert(vez.vezQueueSubmit(graphicsQueue, 1, &submitInfo, null));
 
-    // c.vezFreeCommandBuffers(device, 1, &_commandBuffer);
+    // Present the swapchain framebuffer to the window.
+    const waitDstStageMask = @intCast(u32, vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT); //VkPipelineStageFlags
+    const swapchain = base.getSwapchain();
+    const srcImage = base.getColorAttachment();
+
+    const presentInfo = vez.PresentInfo{
+        .pNext = null,
+        .signalSemaphoreCount = 0, // default
+        .pSignalSemaphores = null, // default
+        .pResults = null, // default
+
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &semaphore,
+        .pWaitDstStageMask = &waitDstStageMask,
+        .swapchainCount = 1,
+        .pSwapchains = &swapchain,
+        .pImages = &srcImage,
+    };
+    try convert(vez.vezQueuePresent(graphicsQueue, &presentInfo)) catch |err| switch (err) {
+        VulkanError.Suboptimal => {}, // hmmst
+        else => err,
+    };
 }
+
+fn onResize(width: u32, height: u32) !void {
+    // Re-create command buffer.
+    vez.vezFreeCommandBuffers(base.getDevice(), 1, &commandBuffer);
+    try createCommandBuffer();
+}
+
+var runtime: f32 = 0;
+fn update(deltaTime: f32) !void {
+    var size = base.getWindowSize();
+    runtime += deltaTime;
+    // Calculate appropriate matrices for the current frame.
+    var ub = UniformBuffer{
+        .model = mat4.rotate(id, runtime * 10, vec.forward()),
+        .view = mat.look_at(vec.new(2, 2, 2), vec.new(0, 0, 0), vec.forward()),
+        .projection = mat.perspective(45, @intToFloat(f32, size[0]) / @intToFloat(f32, size[1]), 0.1, 10), //glm::perspective(glm::radians(45.0f), width / static_cast<float>(height), 0.1f, 10.0f),
+    };
+    //ub.projection[1][1] *= -1;
+
+    var data: *UniformBuffer = undefined;
+    try convert(vez.vezMapBuffer(base.getDevice(), uniformBuffer, 0, @sizeOf(UniformBuffer), @ptrCast(*?*c_void, &data)));
+    data.* = ub;
+    vez.vezUnmapBuffer(base.getDevice(), uniformBuffer);
+}
+
+fn createQuad() VulkanError!void {
+    // A single quad with positions, normals and uvs.
+    var vertices = [_]Vertex{
+        .{ .x = -1, .y = -1, .z = 0, .nx = 0, .ny = 0, .nz = 1, .u = 0, .v = 0 },
+        .{ .x = 1, .y = -1, .z = 0, .nx = 0, .ny = 0, .nz = 1, .u = 1, .v = 0 },
+        .{ .x = 1, .y = 1, .z = 0, .nx = 0, .ny = 0, .nz = 1, .u = 1, .v = 1 },
+        .{ .x = -1, .y = 1, .z = 0, .nx = 0, .ny = 0, .nz = 1, .u = 0, .v = 1 },
+    };
+
+    // Create the device side vertex buffer.
+    var bufferCreateInfo = vez.BufferCreateInfo{
+        .pNext = null,
+        .size = @sizeOf(@TypeOf(vertices)),
+        .usage = vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .queueFamilyIndexCount = 0, // default
+        .pQueueFamilyIndices = null, // default
+    };
+    try convert(vez.vezCreateBuffer(base.getDevice(), vez.MEMORY_NO_ALLOCATION, &bufferCreateInfo, &vertexBuffer.handle));
+    // Allocate memory for the buffer.
+    var memRequirements: vk.MemoryRequirements = undefined;
+    vk.vkGetBufferMemoryRequirements(base.getDevice(), vertexBuffer.handle, &memRequirements);
+
+    var allocInfo = vk.MemoryAllocateInfo{
+        .sType = .STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = null,
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = findMemoryType(base.getPhysicalDevice(), memRequirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT),
+    };
+
+    try convert(vk.vkAllocateMemory(base.getDevice(), &allocInfo, null, &vertexBuffer.memory));
+
+    // Bind the memory to the buffer.
+    try convert(vk.vkBindBufferMemory(base.getDevice(), vertexBuffer.handle, vertexBuffer.memory, 0));
+
+    // Upload the buffer data.
+    var pData: [*]u8 = undefined;
+    try convert(vk.vkMapMemory(base.getDevice(), vertexBuffer.memory, 0, memRequirements.size, 0, @ptrCast(*?*c_void, &pData)));
+    bytewiseCopy(Vertex, &vertices, pData);
+    vk.vkUnmapMemory(base.getDevice(), vertexBuffer.memory);
+
+    // A single quad with positions, normals and uvs.
+    const indices = [_]u32{
+        0, 1, 2,
+        0, 2, 3,
+    };
+
+    // Create the device side index buffer.
+    bufferCreateInfo.size = @sizeOf(@TypeOf(indices));
+    bufferCreateInfo.usage = vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_INDEX_BUFFER_BIT;
+    try convert(vez.vezCreateBuffer(base.getDevice(), vez.MEMORY_NO_ALLOCATION, &bufferCreateInfo, &indexBuffer.handle));
+
+    // Allocate memory for the buffer.
+    vk.vkGetBufferMemoryRequirements(base.getDevice(), indexBuffer.handle, &memRequirements);
+
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(base.getPhysicalDevice(), memRequirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    try convert(vk.vkAllocateMemory(base.getDevice(), &allocInfo, null, &indexBuffer.memory));
+
+    // Bind the memory to the buffer.
+    try convert(vk.vkBindBufferMemory(base.getDevice(), indexBuffer.handle, indexBuffer.memory, 0));
+
+    // Upload the buffer data.
+    try convert(vk.vkMapMemory(base.getDevice(), indexBuffer.memory, 0, memRequirements.size, 0, @ptrCast(*?*c_void, &pData)));
+    bytewiseCopy(u32, &indices, pData);
+    vk.vkUnmapMemory(base.getDevice(), indexBuffer.memory);
+}
+
+fn createTexture() VulkanError!void {
+    // Load image from disk.
+    var width: i32 = undefined;
+    var height: i32 = undefined;
+    var channels: i32 = undefined;
+    var pixelData = imageLoad("../../Samples/Data/Textures/texture.jpg", &width, &height, &channels, 4);
+
+    // Create the base.GetDevice() side image.
+    var imageCreateInfo = vez.ImageCreateInfo{
+        .pNext = null,
+        .flags = 0, // default
+        .imageType = .IMAGE_TYPE_2D,
+        .format = .FORMAT_R8G8B8A8_UNORM,
+        .extent = .{ .width = @intCast(u32, width), .height = @intCast(u32, height), .depth = 1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = .SAMPLE_COUNT_1_BIT,
+        .tiling = .IMAGE_TILING_OPTIMAL,
+        .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
+        .queueFamilyIndexCount = 0, // default
+        .pQueueFamilyIndices = null, // default
+    };
+    try convert(vez.vezCreateImage(base.getDevice(), vez.MEMORY_GPU_ONLY, &imageCreateInfo, &image));
+
+    // Upload the host side data.
+    var subDataInfo = vez.ImageSubDataInfo{
+        .imageSubresource = .{ .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
+        .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
+        .imageExtent = .{ .width = imageCreateInfo.extent.width, .height = imageCreateInfo.extent.height, .depth = 1 },
+        .dataRowLength = 0,
+        .dataImageHeight = 0,
+    };
+    try convert(vez.vezImageSubData(base.getDevice(), image, &subDataInfo, pixelData.ptr));
+
+    imageFree(pixelData);
+
+    // Create the image view for binding the texture as a resource.
+    var imageViewCreateInfo = vez.ImageViewCreateInfo{
+        .pNext = null,
+        .components = base.map_ident, // default!
+        .image = image,
+        .viewType = .IMAGE_VIEW_TYPE_2D,
+        .format = imageCreateInfo.format,
+        .subresourceRange = .{ .layerCount = 1, .levelCount = 1, .baseMipLevel = 0, .baseArrayLayer = 0 }, // defaults
+    };
+    try convert(vez.vezCreateImageView(base.getDevice(), &imageViewCreateInfo, &imageView));
+}
+
+fn createSampler() VulkanError!void {
+    const createInfo = vez.SamplerCreateInfo{
+        .pNext = null,
+        .magFilter = .FILTER_LINEAR, // default?
+        .minFilter = .FILTER_LINEAR, // default?
+        .mipmapMode = .SAMPLER_MIPMAP_MODE_LINEAR, // default?
+        .addressModeU = .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, // default?
+        .addressModeV = .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, // default?
+        .addressModeW = .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, // default?
+        .mipLodBias = 0, // default
+        .anisotropyEnable = 0, // default
+        .maxAnisotropy = 0, // default
+        .compareEnable = 0, // default
+        .compareOp = .COMPARE_OP_NEVER, // default
+        .minLod = 0, // default
+        .maxLod = 0, // default
+        .borderColor = .BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, // default
+        .unnormalizedCoordinates = 0,
+    };
+    try convert(vez.vezCreateSampler(base.getDevice(), &createInfo, &sampler));
+}
+
+fn createUniformBuffer() VulkanError!void {
+    const createInfo = vez.BufferCreateInfo{
+        .pNext = null,
+        .size = @sizeOf(UniformBuffer),
+        .usage = vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        .queueFamilyIndexCount = 0, // default
+        .pQueueFamilyIndices = null, // default
+    };
+    try convert(vez.vezCreateBuffer(base.getDevice(), vez.MEMORY_CPU_TO_GPU, &createInfo, &uniformBuffer));
+}
+
+fn createPipeline() !void {
+    basicPipeline = PipelineDesc{
+        .shaderModules = std.ArrayList(vk.ShaderModule).init(allocator),
+    };
+    var exe_path: []const u8 = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(exe_path);
+    var vert_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "shaders", "SimpleQuad.vert" });
+    defer allocator.free(vert_path);
+    var frag_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "shaders", "SimpleQuad.frag" });
+    defer allocator.free(frag_path);
+
+    try base.createPipeline(allocator, &[_]base.PipelineShaderInfo{
+        .{ .filename = vert_path, .stage = .SHADER_STAGE_VERTEX_BIT },
+        .{ .filename = frag_path, .stage = .SHADER_STAGE_FRAGMENT_BIT },
+    }, &basicPipeline.pipeline, &basicPipeline.shaderModules);
+}
+
+fn createCommandBuffer() !void {
+    vez.vezGetDeviceGraphicsQueue(base.getDevice(), 0, &graphicsQueue);
+
+    // Create a command buffer handle.
+    const allocInfo = vez.CommandBufferAllocateInfo{
+        .pNext = null,
+        .queue = graphicsQueue,
+        .commandBufferCount = 1,
+    };
+    try convert(vez.vezAllocateCommandBuffers(base.getDevice(), &allocInfo, &commandBuffer));
+
+    // Command buffer recording
+    try convert(vez.vezBeginCommandBuffer(commandBuffer, vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT));
+
+    var size = base.getWindowSize();
+    const viewport = vk.Viewport{
+        .x = 0.0, // default?
+        .y = 0.0, // default?
+        .width = @intToFloat(f32, size[0]),
+        .height = @intToFloat(f32, size[1]),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+    const scissor = vk.Rect2D{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = .{ .width = size[0], .height = size[1] },
+    };
+    vez.vezCmdSetViewport(0, 1, &[_]vk.Viewport{viewport});
+    vez.vezCmdSetScissor(0, 1, &[_]vk.Rect2D{scissor});
+    vez.vezCmdSetViewportState(1);
+
+    // Define clear values for the swapchain's color and depth attachments.
+    var attachmentReferences = [2]vez.AttachmentReference{
+        .{
+            .clearValue = .{ .color = .{ .float32 = .{ 0.3, 0.3, 0.3, 0.0 } } },
+            .loadOp = .ATTACHMENT_LOAD_OP_CLEAR, // default?
+            .storeOp = .ATTACHMENT_STORE_OP_STORE, // default?
+        },
+        .{
+            .clearValue = .{ .depthStencil = .{ .depth = 1.0, .stencil = 0 } },
+            .loadOp = .ATTACHMENT_LOAD_OP_CLEAR, // default?
+            .storeOp = .ATTACHMENT_STORE_OP_STORE, // default?
+        },
+    };
+
+    const beginInfo = vez.RenderPassBeginInfo{
+        .pNext = null,
+        .framebuffer = base.getFramebuffer(),
+        .attachmentCount = @intCast(u32, attachmentReferences.len),
+        .pAttachments = &attachmentReferences,
+    };
+    vez.vezCmdBeginRenderPass(&beginInfo);
+
+    // Bind the pipeline and associated resources.
+    vez.vezCmdBindPipeline(basicPipeline.pipeline);
+    vez.vezCmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
+    vez.vezCmdBindImageView(imageView, sampler, 0, 1, 0);
+
+    // Set push constants.
+    //float blendColor[3] = { 1.0f, 1.0f, 1.0f };
+    //vezCmdPushConstants(0, sizeof(float) * 3, &blendColor[0]);
+
+    // Set depth stencil state.
+    const depthStencilState = vez.PipelineDepthStencilState{
+        .pNext = null,
+        .depthBoundsTestEnable = 0, // default
+        .stencilTestEnable = 0, // default
+        .front = .{
+            .failOp = .STENCIL_OP_KEEP,
+            .passOp = .STENCIL_OP_KEEP,
+            .depthFailOp = .STENCIL_OP_KEEP,
+            .compareOp = .COMPARE_OP_NEVER,
+        }, //  default!
+        .back = .{
+            .failOp = .STENCIL_OP_KEEP,
+            .passOp = .STENCIL_OP_KEEP,
+            .depthFailOp = .STENCIL_OP_KEEP,
+            .compareOp = .COMPARE_OP_NEVER,
+        }, // default!
+        .depthTestEnable = vk.TRUE,
+        .depthWriteEnable = vk.TRUE,
+        .depthCompareOp = .COMPARE_OP_LESS_OR_EQUAL,
+    };
+    vez.vezCmdSetDepthStencilState(&depthStencilState);
+
+    // Bind the vertex buffer and index buffers.
+    const offset: vk.DeviceSize = 0;
+    vez.vezCmdBindVertexBuffers(0, 1, &[_]vk.Buffer{vertexBuffer.handle}, &[_]u64{offset});
+    vez.vezCmdBindIndexBuffer(indexBuffer.handle, 0, .INDEX_TYPE_UINT32);
+
+    // Draw the quad.
+    vez.vezCmdDrawIndexed(6, 1, 0, 0, 0);
+
+    vez.vezCmdEndRenderPass();
+    try convert(vez.vezEndCommandBuffer());
+}
+
+// abstracc
+
+fn imageLoad(filename: []const u8, x: *i32, y: *i32, channels_in_file: *i32, desired_channels: i32) []const u8 {
+    x.* = 2;
+    y.* = 2;
+    channels_in_file.* = 4;
+    return &[_]u8{
+        255, 0,   0,   0,
+        0,   255, 0,   0,
+        0,   0,   255, 0,
+        0,   0,   0,   255,
+    };
+}
+
+fn imageFree(img: []const u8) void {}

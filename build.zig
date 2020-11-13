@@ -17,12 +17,16 @@ pub fn build(b: *Builder) void {
     exe.setBuildMode(mode);
     exe.setLibCFile("libc.txt");
     exe.addLibPath("../zforeign/V-EZ/Bin/x86_64/");
-    exe.addIncludeDir("../zforeign/V-EZ/Source/");
+    exe.addPackagePath("zalgebra", "zalgebra/src/main.zig");
+
     exe.linkSystemLibrary("VEZ");
     exe.linkSystemLibrary("glfw");
     exe.linkSystemLibrary("vulkan");
     exe.linkSystemLibrary("c");
     exe.install();
+
+    exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.vert", .Bin, "shaders/SimpleQuad.vert").step);
+    exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.frag", .Bin, "shaders/SimpleQuad.frag").step);
 
     const run_cmd = exe.run();
     run_cmd.step.dependOn(b.getInstallStep());
