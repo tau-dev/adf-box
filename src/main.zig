@@ -4,14 +4,15 @@ const c = base.c;
 const vk = base.vk;
 const vez = base.vez;
 const convert = base.convert;
+const roundUp = base.roundUp;
 const VulkanError = base.VulkanError;
-const stbi = @cImport({
-    @cInclude("VEZ.h");
-});
+const stdout = std.io.getStdOut().outStream();
 
 const mat = @import("zalgebra");
 const mat4 = mat.mat4;
 const vec = mat.vec3;
+
+const model = @import("model.zig");
 
 const Vertex = struct {
     x: f32,
@@ -39,36 +40,129 @@ const UniformBuffer = struct {
     projection: mat4,
 };
 
-const Buffer = struct {
-    handle: vk.Buffer, memory: vk.DeviceMemory
-};
-
-const PipelineDesc = struct {
-    pipeline: vez.Pipeline = null,
-    shaderModules: std.ArrayList(vk.ShaderModule),
-};
-
-var graphicsQueue: vk.Queue = null;
-var vertexBuffer = Buffer{ .handle = null, .memory = null };
-var indexBuffer = Buffer{ .handle = null, .memory = null };
-var image: vk.Image = null;
-var imageView: vk.ImageView = null;
-var sampler: vk.Sampler = null;
-var uniformBuffer: vk.Buffer = null;
-var basicPipeline: PipelineDesc = undefined;
-var commandBuffer: vk.CommandBuffer = null;
-
-const allocator = std.heap.c_allocator;
-
 fn bytewiseCopy(comptime T: type, data: []const T, dest: [*]u8) void {
     for (@ptrCast([*]const u8, data.ptr)[0..(data.len * @sizeOf(T))]) |byte, i| {
         dest[i] = byte;
     }
 }
 
+const Buffer = struct {
+    handle: vk.Buffer,
+    memory: vk.DeviceMemory,
+    size: usize,
+
+    fn init(self: *@This(), device: vk.Device, usage: vk.BufferUsageFlags, size: usize) VulkanError!void {
+        // Create the device side buffer.
+        var bufferCreateInfo = vez.BufferCreateInfo{
+            .size = size,
+            .usage = @intCast(u32, vk.BUFFER_USAGE_TRANSFER_DST_BIT) | usage,
+        };
+        try convert(vez.createBuffer(base.getDevice(), vez.MEMORY_NO_ALLOCATION, &bufferCreateInfo, &self.handle));
+        // Allocate memory for the buffer.
+        var memRequirements: vk.MemoryRequirements = undefined;
+        vk.getBufferMemoryRequirements(base.getDevice(), self.handle, &memRequirements);
+
+        self.size = memRequirements.size;
+        var allocInfo = vk.MemoryAllocateInfo{
+            .allocationSize = memRequirements.size,
+            .memoryTypeIndex = findMemoryType(base.getPhysicalDevice(), memRequirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT),
+        };
+
+        try convert(vk.allocateMemory(base.getDevice(), &allocInfo, null, &self.memory));
+
+        // Bind the memory to the buffer.
+        try convert(vk.bindBufferMemory(base.getDevice(), self.handle, self.memory, 0));
+    }
+
+    fn load(self: @This(), comptime T: type, data: []const T) !void {
+        std.debug.assert(data.len * @sizeOf(T) <= self.size);
+        var pData: [*]u8 = undefined;
+        try convert(vk.mapMemory(base.getDevice(), self.memory, 0, self.size, 0, @ptrCast(*?*c_void, &pData)));
+        bytewiseCopy(T, data, pData);
+        vk.unmapMemory(base.getDevice(), self.memory);
+    }
+    fn deinit(self: @This(), device: vk.Device) void {
+        vez.destroyBuffer(device, self.handle);
+        vk.freeMemory(device, self.memory, null);
+    }
+};
+
+const PipelineDesc = struct {
+    pipeline: vez.Pipeline = null,
+    shaderModules: []vk.ShaderModule,
+};
+
+const Image = struct {
+    texture: vk.Image = null,
+    view: vk.ImageView = null,
+    sampler: vk.Sampler = null,
+    width: u32 = 0,
+    height: u32 = 0,
+
+    pub fn init(self: *@This(), createInfo: vez.ImageCreateInfo, filter: vk.Filter, addressMode: vk.SamplerAddressMode) VulkanError!void {
+        self.width = createInfo.extent.width;
+        self.height = createInfo.extent.height;
+        try convert(vez.createImage(base.getDevice(), vez.MEMORY_GPU_ONLY, &createInfo, &self.texture));
+
+        // Create the image view for binding the texture as a resource.
+        var imageViewCreateInfo = vez.ImageViewCreateInfo{
+            .image = self.texture,
+            .viewType = .IMAGE_VIEW_TYPE_2D,
+            .format = createInfo.format,
+            .subresourceRange = .{ .layerCount = 1, .levelCount = 1, .baseMipLevel = 0, .baseArrayLayer = 0 }, // defaults
+        };
+        try convert(vez.createImageView(base.getDevice(), &imageViewCreateInfo, &self.view));
+
+        const samplerInfo = vez.SamplerCreateInfo{
+            .magFilter = filter, // default?
+            .minFilter = filter, // default?
+            .mipmapMode = .SAMPLER_MIPMAP_MODE_LINEAR, // default?
+            .addressModeU = addressMode, // default?
+            .addressModeV = addressMode, // default?
+            .addressModeW = addressMode, // default?
+            .unnormalizedCoordinates = 0,
+        };
+        try convert(vez.createSampler(base.getDevice(), &samplerInfo, &self.sampler));
+    }
+
+    fn cmdBind(self: @This(), set: u32, binding: u32) void {
+        vez.cmdBindImageView(renderTexture.view, renderTexture.sampler, set, binding, 0);
+    }
+
+    fn deinit(self: @This(), device: vk.Device) void {
+        vez.destroyImageView(device, self.view);
+        vez.destroyImage(device, self.texture);
+        vez.destroySampler(device, self.sampler);
+    }
+};
+
+var graphicsQueue: vk.Queue = null;
+var vertexBuffer = Buffer{ .handle = null, .memory = null, .size = 0 };
+var indexBuffer = Buffer{ .handle = null, .memory = null, .size = 0 };
+var renderTexture: Image = Image{};
+var values: Image = Image{};
+var octData: Buffer = Buffer{ .handle = null, .memory = null, .size = 0 };
+var uniformBuffer: vk.Buffer = null;
+var drawPipeline: PipelineDesc = undefined;
+var computePipeline: PipelineDesc = undefined;
+var commandBuffer: vk.CommandBuffer = null;
+var customCallback: vk.DebugUtilsMessengerEXT = null;
+
+const allocator = std.heap.c_allocator;
+
+export fn debugCallback(
+    severity: vk.DebugUtilsMessageSeverityFlagBitsEXT,
+    msgType: vk.DebugUtilsMessageTypeFlagsEXT,
+    data: [*c]const vk.DebugUtilsMessengerCallbackDataEXT,
+    userData: ?*c_void,
+) vk.Bool32 {
+    stdout.print("wowz: {}", .{data.*.pMessage}) catch unreachable;
+    return 0;
+}
+
 fn findMemoryType(physicalDevice: vk.PhysicalDevice, typeFilter: u32, properties: vk.MemoryPropertyFlags) u32 {
     var memProperties: vk.PhysicalDeviceMemoryProperties = undefined;
-    vk.vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+    vk.getPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
     var i: u5 = 0;
     const mask: u32 = 1;
     while (i < memProperties.memoryTypeCount) : (i += 1) {
@@ -91,9 +185,19 @@ pub fn main() anyerror!void {
 }
 
 fn initialize() !void {
+    const callbackCreateInfo = vk.DebugUtilsMessengerCreateInfoEXT{
+        .sType = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+        .flags = 0,
+        .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+        .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+        .pfnUserCallback = debugCallback,
+        .pUserData = null,
+    };
+    // TODO: Register the callback (currently throws linker error)
+    // try convert(vk.createDebugUtilsMessengerEXT(base.getInstance(), &callbackCreateInfo, null, &customCallback));
     try createQuad();
-    try createTexture();
-    try createSampler();
+    try createRenderTexture();
+    try createModel();
     try createUniformBuffer();
     try createPipeline();
     try createCommandBuffer();
@@ -101,21 +205,23 @@ fn initialize() !void {
 
 fn cleanup() !void {
     var device = base.getDevice();
-    vez.vezDestroyBuffer(device, vertexBuffer.handle);
-    vk.vkFreeMemory(device, vertexBuffer.memory, null);
-    vez.vezDestroyBuffer(device, indexBuffer.handle);
-    vk.vkFreeMemory(device, indexBuffer.memory, null);
-    vez.vezDestroyImageView(device, imageView);
-    vez.vezDestroyImage(device, image);
-    vez.vezDestroySampler(device, sampler);
-    vez.vezDestroyBuffer(device, uniformBuffer);
+    vertexBuffer.deinit(device);
+    indexBuffer.deinit(device);
+    renderTexture.deinit(device);
+    values.deinit(device);
+    octData.deinit(device);
+    vez.destroyBuffer(device, uniformBuffer);
 
-    vez.vezDestroyPipeline(device, basicPipeline.pipeline);
-    for (basicPipeline.shaderModules.items) |shaderModule| {
-        vez.vezDestroyShaderModule(device, shaderModule);
+    vez.destroyPipeline(device, drawPipeline.pipeline);
+    for (drawPipeline.shaderModules) |shaderModule| {
+        vez.destroyShaderModule(device, shaderModule);
+    }
+    vez.destroyPipeline(device, computePipeline.pipeline);
+    for (computePipeline.shaderModules) |shaderModule| {
+        vez.destroyShaderModule(device, shaderModule);
     }
 
-    vez.vezFreeCommandBuffers(device, 1, &commandBuffer);
+    vez.freeCommandBuffers(device, 1, &commandBuffer);
 }
 
 fn draw() !void {
@@ -123,7 +229,6 @@ fn draw() !void {
     var semaphore: vk.Semaphore = null;
 
     const submitInfo = vez.SubmitInfo{
-        .pNext = null,
         .waitSemaphoreCount = 0, // default
         .pWaitSemaphores = null, // default
         .pWaitDstStageMask = null, // default
@@ -132,7 +237,7 @@ fn draw() !void {
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &semaphore,
     };
-    try convert(vez.vezQueueSubmit(graphicsQueue, 1, &submitInfo, null));
+    try convert(vez.queueSubmit(graphicsQueue, 1, &submitInfo, null));
 
     // Present the swapchain framebuffer to the window.
     const waitDstStageMask = @intCast(u32, vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT); //VkPipelineStageFlags
@@ -140,7 +245,6 @@ fn draw() !void {
     const srcImage = base.getColorAttachment();
 
     const presentInfo = vez.PresentInfo{
-        .pNext = null,
         .signalSemaphoreCount = 0, // default
         .pSignalSemaphores = null, // default
         .pResults = null, // default
@@ -152,15 +256,16 @@ fn draw() !void {
         .pSwapchains = &swapchain,
         .pImages = &srcImage,
     };
-    try convert(vez.vezQueuePresent(graphicsQueue, &presentInfo)) catch |err| switch (err) {
+    try convert(vez.queuePresent(graphicsQueue, &presentInfo)) catch |err| switch (err) {
         VulkanError.Suboptimal => {}, // hmmst
         else => err,
     };
 }
 
 fn onResize(width: u32, height: u32) !void {
-    // Re-create command buffer.
-    vez.vezFreeCommandBuffers(base.getDevice(), 1, &commandBuffer);
+    renderTexture.deinit(base.getDevice());
+    try createRenderTexture();
+    vez.freeCommandBuffers(base.getDevice(), 1, &commandBuffer);
     try createCommandBuffer();
 }
 
@@ -174,12 +279,12 @@ fn update(deltaTime: f32) !void {
         .view = mat.look_at(vec.new(2, 2, 2), vec.new(0, 0, 0), vec.forward()),
         .projection = mat.perspective(45, @intToFloat(f32, size[0]) / @intToFloat(f32, size[1]), 0.1, 10), //glm::perspective(glm::radians(45.0f), width / static_cast<float>(height), 0.1f, 10.0f),
     };
-    //ub.projection[1][1] *= -1;
+    ub.projection.data[1][1] *= -1;
 
     var data: *UniformBuffer = undefined;
-    try convert(vez.vezMapBuffer(base.getDevice(), uniformBuffer, 0, @sizeOf(UniformBuffer), @ptrCast(*?*c_void, &data)));
+    try convert(vez.mapBuffer(base.getDevice(), uniformBuffer, 0, @sizeOf(UniformBuffer), @ptrCast(*?*c_void, &data)));
     data.* = ub;
-    vez.vezUnmapBuffer(base.getDevice(), uniformBuffer);
+    vez.unmapBuffer(base.getDevice(), uniformBuffer);
 }
 
 fn createQuad() VulkanError!void {
@@ -191,219 +296,123 @@ fn createQuad() VulkanError!void {
         .{ .x = -1, .y = 1, .z = 0, .nx = 0, .ny = 0, .nz = 1, .u = 0, .v = 1 },
     };
 
-    // Create the device side vertex buffer.
-    var bufferCreateInfo = vez.BufferCreateInfo{
-        .pNext = null,
-        .size = @sizeOf(@TypeOf(vertices)),
-        .usage = vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        .queueFamilyIndexCount = 0, // default
-        .pQueueFamilyIndices = null, // default
-    };
-    try convert(vez.vezCreateBuffer(base.getDevice(), vez.MEMORY_NO_ALLOCATION, &bufferCreateInfo, &vertexBuffer.handle));
-    // Allocate memory for the buffer.
-    var memRequirements: vk.MemoryRequirements = undefined;
-    vk.vkGetBufferMemoryRequirements(base.getDevice(), vertexBuffer.handle, &memRequirements);
+    try vertexBuffer.init(base.getDevice(), vk.BUFFER_USAGE_VERTEX_BUFFER_BIT, @sizeOf(@TypeOf(vertices)));
+    try vertexBuffer.load(Vertex, &vertices);
 
-    var allocInfo = vk.MemoryAllocateInfo{
-        .sType = .STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .pNext = null,
-        .allocationSize = memRequirements.size,
-        .memoryTypeIndex = findMemoryType(base.getPhysicalDevice(), memRequirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT),
-    };
-
-    try convert(vk.vkAllocateMemory(base.getDevice(), &allocInfo, null, &vertexBuffer.memory));
-
-    // Bind the memory to the buffer.
-    try convert(vk.vkBindBufferMemory(base.getDevice(), vertexBuffer.handle, vertexBuffer.memory, 0));
-
-    // Upload the buffer data.
-    var pData: [*]u8 = undefined;
-    try convert(vk.vkMapMemory(base.getDevice(), vertexBuffer.memory, 0, memRequirements.size, 0, @ptrCast(*?*c_void, &pData)));
-    bytewiseCopy(Vertex, &vertices, pData);
-    vk.vkUnmapMemory(base.getDevice(), vertexBuffer.memory);
-
-    // A single quad with positions, normals and uvs.
     const indices = [_]u32{
         0, 1, 2,
         0, 2, 3,
     };
 
-    // Create the device side index buffer.
-    bufferCreateInfo.size = @sizeOf(@TypeOf(indices));
-    bufferCreateInfo.usage = vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_INDEX_BUFFER_BIT;
-    try convert(vez.vezCreateBuffer(base.getDevice(), vez.MEMORY_NO_ALLOCATION, &bufferCreateInfo, &indexBuffer.handle));
-
-    // Allocate memory for the buffer.
-    vk.vkGetBufferMemoryRequirements(base.getDevice(), indexBuffer.handle, &memRequirements);
-
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(base.getPhysicalDevice(), memRequirements.memoryTypeBits, vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    try convert(vk.vkAllocateMemory(base.getDevice(), &allocInfo, null, &indexBuffer.memory));
-
-    // Bind the memory to the buffer.
-    try convert(vk.vkBindBufferMemory(base.getDevice(), indexBuffer.handle, indexBuffer.memory, 0));
-
-    // Upload the buffer data.
-    try convert(vk.vkMapMemory(base.getDevice(), indexBuffer.memory, 0, memRequirements.size, 0, @ptrCast(*?*c_void, &pData)));
-    bytewiseCopy(u32, &indices, pData);
-    vk.vkUnmapMemory(base.getDevice(), indexBuffer.memory);
+    try indexBuffer.init(base.getDevice(), vk.BUFFER_USAGE_INDEX_BUFFER_BIT, @sizeOf(@TypeOf(indices)));
+    try indexBuffer.load(u32, &indices);
 }
 
-fn createTexture() VulkanError!void {
-    // Load image from disk.
-    var width: i32 = undefined;
-    var height: i32 = undefined;
-    var channels: i32 = undefined;
-    var pixelData = imageLoad("../../Samples/Data/Textures/texture.jpg", &width, &height, &channels, 4);
+fn createRenderTexture() !void {
+    var extent = base.getWindowSize();
+    const channels: u32 = 4;
 
     // Create the base.GetDevice() side image.
     var imageCreateInfo = vez.ImageCreateInfo{
-        .pNext = null,
-        .flags = 0, // default
-        .imageType = .IMAGE_TYPE_2D,
         .format = .FORMAT_R8G8B8A8_UNORM,
-        .extent = .{ .width = @intCast(u32, width), .height = @intCast(u32, height), .depth = 1 },
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = .SAMPLE_COUNT_1_BIT,
-        .tiling = .IMAGE_TILING_OPTIMAL,
-        .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
-        .queueFamilyIndexCount = 0, // default
-        .pQueueFamilyIndices = null, // default
+        .extent = .{ .width = extent[0], .height = extent[1], .depth = 1 },
+        .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT | vk.IMAGE_USAGE_STORAGE_BIT,
     };
-    try convert(vez.vezCreateImage(base.getDevice(), vez.MEMORY_GPU_ONLY, &imageCreateInfo, &image));
-
-    // Upload the host side data.
-    var subDataInfo = vez.ImageSubDataInfo{
-        .imageSubresource = .{ .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-        .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
-        .imageExtent = .{ .width = imageCreateInfo.extent.width, .height = imageCreateInfo.extent.height, .depth = 1 },
-        .dataRowLength = 0,
-        .dataImageHeight = 0,
-    };
-    try convert(vez.vezImageSubData(base.getDevice(), image, &subDataInfo, pixelData.ptr));
-
-    imageFree(pixelData);
-
-    // Create the image view for binding the texture as a resource.
-    var imageViewCreateInfo = vez.ImageViewCreateInfo{
-        .pNext = null,
-        .components = base.map_ident, // default!
-        .image = image,
-        .viewType = .IMAGE_VIEW_TYPE_2D,
-        .format = imageCreateInfo.format,
-        .subresourceRange = .{ .layerCount = 1, .levelCount = 1, .baseMipLevel = 0, .baseArrayLayer = 0 }, // defaults
-    };
-    try convert(vez.vezCreateImageView(base.getDevice(), &imageViewCreateInfo, &imageView));
+    try renderTexture.init(imageCreateInfo, .FILTER_LINEAR, .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
 }
 
-fn createSampler() VulkanError!void {
-    const createInfo = vez.SamplerCreateInfo{
-        .pNext = null,
-        .magFilter = .FILTER_LINEAR, // default?
-        .minFilter = .FILTER_LINEAR, // default?
-        .mipmapMode = .SAMPLER_MIPMAP_MODE_LINEAR, // default?
-        .addressModeU = .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, // default?
-        .addressModeV = .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, // default?
-        .addressModeW = .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, // default?
-        .mipLodBias = 0, // default
-        .anisotropyEnable = 0, // default
-        .maxAnisotropy = 0, // default
-        .compareEnable = 0, // default
-        .compareOp = .COMPARE_OP_NEVER, // default
-        .minLod = 0, // default
-        .maxLod = 0, // default
-        .borderColor = .BORDER_COLOR_FLOAT_TRANSPARENT_BLACK, // default
-        .unnormalizedCoordinates = 0,
+fn createModel() !void {
+    const valuesWidth = 32;
+
+    var data = try model.load(allocator, valuesWidth);
+    defer data.deinit(allocator);
+
+    // Create the base.GetDevice() side image.
+    var imageCreateInfo = vez.ImageCreateInfo{
+        .format = .FORMAT_R8_UNORM,
+        .extent = .{ .width = data.width, .height = data.height, .depth = 1 },
+        .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
     };
-    try convert(vez.vezCreateSampler(base.getDevice(), &createInfo, &sampler));
+    try values.init(imageCreateInfo, .FILTER_LINEAR, .SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+
+    var subDataInfo = vez.ImageSubDataInfo{
+        .imageExtent = .{ .width = data.width, .height = data.height, .depth = 1 },
+    };
+    try convert(vez.vezImageSubData(base.getDevice(), values.texture, &subDataInfo, data.values.ptr));
+
+    try octData.init(base.getDevice(), vk.BUFFER_USAGE_STORAGE_BUFFER_BIT, data.tree.len * @sizeOf(i32) * 2);
+    try octData.load([2]i32, data.tree);
 }
 
 fn createUniformBuffer() VulkanError!void {
     const createInfo = vez.BufferCreateInfo{
-        .pNext = null,
         .size = @sizeOf(UniformBuffer),
         .usage = vk.BUFFER_USAGE_TRANSFER_DST_BIT | vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        .queueFamilyIndexCount = 0, // default
-        .pQueueFamilyIndices = null, // default
     };
-    try convert(vez.vezCreateBuffer(base.getDevice(), vez.MEMORY_CPU_TO_GPU, &createInfo, &uniformBuffer));
+    try convert(vez.createBuffer(base.getDevice(), vez.MEMORY_CPU_TO_GPU, &createInfo, &uniformBuffer));
 }
 
 fn createPipeline() !void {
-    basicPipeline = PipelineDesc{
-        .shaderModules = std.ArrayList(vk.ShaderModule).init(allocator),
+    drawPipeline = PipelineDesc{
+        .shaderModules = try allocator.alloc(vk.ShaderModule, 2),
     };
-    var exe_path: []const u8 = try std.fs.selfExeDirPathAlloc(allocator);
-    defer allocator.free(exe_path);
-    var vert_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "shaders", "SimpleQuad.vert" });
-    defer allocator.free(vert_path);
-    var frag_path = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "shaders", "SimpleQuad.frag" });
-    defer allocator.free(frag_path);
-
     try base.createPipeline(allocator, &[_]base.PipelineShaderInfo{
-        .{ .filename = vert_path, .stage = .SHADER_STAGE_VERTEX_BIT },
-        .{ .filename = frag_path, .stage = .SHADER_STAGE_FRAGMENT_BIT },
-    }, &basicPipeline.pipeline, &basicPipeline.shaderModules);
+        .{ .filename = "SimpleQuad.vert", .stage = .SHADER_STAGE_VERTEX_BIT },
+        .{ .filename = "SimpleQuad.frag", .stage = .SHADER_STAGE_FRAGMENT_BIT },
+    }, &drawPipeline.pipeline, drawPipeline.shaderModules);
+
+    computePipeline = PipelineDesc{
+        .shaderModules = try allocator.alloc(vk.ShaderModule, 1),
+    };
+    try base.createPipeline(allocator, &[_]base.PipelineShaderInfo{
+        .{ .filename = "SimpleQuad.comp", .stage = .SHADER_STAGE_COMPUTE_BIT },
+    }, &computePipeline.pipeline, computePipeline.shaderModules);
 }
 
 fn createCommandBuffer() !void {
-    vez.vezGetDeviceGraphicsQueue(base.getDevice(), 0, &graphicsQueue);
+    vez.getDeviceGraphicsQueue(base.getDevice(), 0, &graphicsQueue);
 
-    // Create a command buffer handle.
-    const allocInfo = vez.CommandBufferAllocateInfo{
-        .pNext = null,
+    try convert(vez.allocateCommandBuffers(base.getDevice(), &vez.CommandBufferAllocateInfo{
         .queue = graphicsQueue,
         .commandBufferCount = 1,
-    };
-    try convert(vez.vezAllocateCommandBuffers(base.getDevice(), &allocInfo, &commandBuffer));
+    }, &commandBuffer));
 
     // Command buffer recording
-    try convert(vez.vezBeginCommandBuffer(commandBuffer, vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT));
+    try convert(vez.beginCommandBuffer(commandBuffer, vk.COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT));
 
-    var size = base.getWindowSize();
-    const viewport = vk.Viewport{
-        .x = 0.0, // default?
-        .y = 0.0, // default?
-        .width = @intToFloat(f32, size[0]),
-        .height = @intToFloat(f32, size[1]),
-        .minDepth = 0.0,
-        .maxDepth = 1.0,
-    };
-    const scissor = vk.Rect2D{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = .{ .width = size[0], .height = size[1] },
-    };
-    vez.vezCmdSetViewport(0, 1, &[_]vk.Viewport{viewport});
-    vez.vezCmdSetScissor(0, 1, &[_]vk.Rect2D{scissor});
-    vez.vezCmdSetViewportState(1);
+    vez.cmdBindPipeline(computePipeline.pipeline);
+    vez.cmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
+    renderTexture.cmdBind(0, 3);
+    const extents = base.getWindowSize();
+    const groupSize = 32;
+    vez.cmdDispatch(roundUp(extents[0], groupSize), roundUp(extents[1], groupSize), 1);
+
+    base.cmdSetFullViewport();
+    vez.cmdSetViewportState(1);
 
     // Define clear values for the swapchain's color and depth attachments.
     var attachmentReferences = [2]vez.AttachmentReference{
         .{
             .clearValue = .{ .color = .{ .float32 = .{ 0.3, 0.3, 0.3, 0.0 } } },
             .loadOp = .ATTACHMENT_LOAD_OP_CLEAR, // default?
-            .storeOp = .ATTACHMENT_STORE_OP_STORE, // default?
         },
         .{
             .clearValue = .{ .depthStencil = .{ .depth = 1.0, .stencil = 0 } },
             .loadOp = .ATTACHMENT_LOAD_OP_CLEAR, // default?
-            .storeOp = .ATTACHMENT_STORE_OP_STORE, // default?
         },
     };
 
     const beginInfo = vez.RenderPassBeginInfo{
-        .pNext = null,
         .framebuffer = base.getFramebuffer(),
         .attachmentCount = @intCast(u32, attachmentReferences.len),
         .pAttachments = &attachmentReferences,
     };
-    vez.vezCmdBeginRenderPass(&beginInfo);
+    vez.cmdBeginRenderPass(&beginInfo);
 
     // Bind the pipeline and associated resources.
-    vez.vezCmdBindPipeline(basicPipeline.pipeline);
-    vez.vezCmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
-    vez.vezCmdBindImageView(imageView, sampler, 0, 1, 0);
+    vez.cmdBindPipeline(drawPipeline.pipeline);
+    vez.cmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
+    renderTexture.cmdBind(0, 1);
 
     // Set push constants.
     //float blendColor[3] = { 1.0f, 1.0f, 1.0f };
@@ -411,51 +420,32 @@ fn createCommandBuffer() !void {
 
     // Set depth stencil state.
     const depthStencilState = vez.PipelineDepthStencilState{
-        .pNext = null,
-        .depthBoundsTestEnable = 0, // default
-        .stencilTestEnable = 0, // default
+        .depthBoundsTestEnable = 0,
+        .stencilTestEnable = 0,
+        .depthCompareOp = .COMPARE_OP_LESS_OR_EQUAL,
+        .depthTestEnable = vk.TRUE,
+        .depthWriteEnable = vk.TRUE,
         .front = .{
             .failOp = .STENCIL_OP_KEEP,
             .passOp = .STENCIL_OP_KEEP,
             .depthFailOp = .STENCIL_OP_KEEP,
-            .compareOp = .COMPARE_OP_NEVER,
-        }, //  default!
+        }, //  default?
         .back = .{
             .failOp = .STENCIL_OP_KEEP,
             .passOp = .STENCIL_OP_KEEP,
             .depthFailOp = .STENCIL_OP_KEEP,
-            .compareOp = .COMPARE_OP_NEVER,
-        }, // default!
-        .depthTestEnable = vk.TRUE,
-        .depthWriteEnable = vk.TRUE,
-        .depthCompareOp = .COMPARE_OP_LESS_OR_EQUAL,
+        }, // default?
     };
-    vez.vezCmdSetDepthStencilState(&depthStencilState);
+    vez.cmdSetDepthStencilState(&depthStencilState);
 
     // Bind the vertex buffer and index buffers.
-    const offset: vk.DeviceSize = 0;
-    vez.vezCmdBindVertexBuffers(0, 1, &[_]vk.Buffer{vertexBuffer.handle}, &[_]u64{offset});
-    vez.vezCmdBindIndexBuffer(indexBuffer.handle, 0, .INDEX_TYPE_UINT32);
+    vez.cmdBindVertexBuffers(0, 1, &[_]vk.Buffer{vertexBuffer.handle}, &[_]u64{0});
+    vez.cmdBindIndexBuffer(indexBuffer.handle, 0, .INDEX_TYPE_UINT32);
 
     // Draw the quad.
-    vez.vezCmdDrawIndexed(6, 1, 0, 0, 0);
+    vez.cmdDrawIndexed(6, 1, 0, 0, 0);
 
-    vez.vezCmdEndRenderPass();
-    try convert(vez.vezEndCommandBuffer());
+    vez.cmdEndRenderPass();
+
+    try convert(vez.endCommandBuffer());
 }
-
-// abstracc
-
-fn imageLoad(filename: []const u8, x: *i32, y: *i32, channels_in_file: *i32, desired_channels: i32) []const u8 {
-    x.* = 2;
-    y.* = 2;
-    channels_in_file.* = 4;
-    return &[_]u8{
-        255, 0,   0,   0,
-        0,   255, 0,   0,
-        0,   0,   255, 0,
-        0,   0,   0,   255,
-    };
-}
-
-fn imageFree(img: []const u8) void {}

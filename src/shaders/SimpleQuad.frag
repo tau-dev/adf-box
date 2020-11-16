@@ -8,9 +8,9 @@ layout(location = 0) in VS_OUT
     vec2 texCoord;
 } ps_in;
 
-layout(binding = 1) uniform sampler2D texSampler;
-
 layout(location = 0) out vec4 outColor;
+
+layout(binding = 1) uniform sampler2D texSampler;
 
 void main()
 {

@@ -25,6 +25,7 @@ pub fn build(b: *Builder) void {
     exe.linkSystemLibrary("c");
     exe.install();
 
+    exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.comp", .Bin, "shaders/SimpleQuad.comp").step);
     exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.vert", .Bin, "shaders/SimpleQuad.vert").step);
     exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.frag", .Bin, "shaders/SimpleQuad.frag").step);
 

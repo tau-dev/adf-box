@@ -1,5 +1,7 @@
 const vk = @import("vulkan.zig");
 
+usingnamespace @import("vez-l1.zig");
+
 pub const struct_Swapchain_T = opaque {};
 pub const Swapchain = ?*struct_Swapchain_T;
 pub const struct_Pipeline_T = opaque {};
@@ -81,7 +83,7 @@ pub const struct_ClearAttachment = extern struct {
 };
 pub const ClearAttachment = struct_ClearAttachment;
 pub const struct_ApplicationInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     pApplicationName: [*c]const u8,
     applicationVersion: u32,
     pEngineName: [*c]const u8,
@@ -89,7 +91,7 @@ pub const struct_ApplicationInfo = extern struct {
 };
 pub const ApplicationInfo = struct_ApplicationInfo;
 pub const struct_InstanceCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     pApplicationInfo: [*c]const ApplicationInfo,
     enabledLayerCount: u32,
     ppEnabledLayerNames: [*c]const [*c]const u8,
@@ -98,14 +100,14 @@ pub const struct_InstanceCreateInfo = extern struct {
 };
 pub const InstanceCreateInfo = struct_InstanceCreateInfo;
 pub const struct_SwapchainCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     surface: vk.SurfaceKHR,
     format: vk.SurfaceFormatKHR,
     tripleBuffer: vk.Bool32,
 };
 pub const SwapchainCreateInfo = struct_SwapchainCreateInfo;
 pub const struct_DeviceCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     enabledLayerCount: u32,
     ppEnabledLayerNames: [*c]const [*c]const u8,
     enabledExtensionCount: u32,
@@ -113,7 +115,7 @@ pub const struct_DeviceCreateInfo = extern struct {
 };
 pub const DeviceCreateInfo = struct_DeviceCreateInfo;
 pub const struct_SubmitInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     waitSemaphoreCount: u32,
     pWaitSemaphores: [*c]const vk.Semaphore,
     pWaitDstStageMask: [*c]const vk.PipelineStageFlags,
@@ -124,7 +126,7 @@ pub const struct_SubmitInfo = extern struct {
 };
 pub const SubmitInfo = struct_SubmitInfo;
 pub const struct_PresentInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     waitSemaphoreCount: u32,
     pWaitSemaphores: [*c]const vk.Semaphore,
     pWaitDstStageMask: [*c]const vk.PipelineStageFlags,
@@ -137,20 +139,20 @@ pub const struct_PresentInfo = extern struct {
 };
 pub const PresentInfo = struct_PresentInfo;
 pub const struct_QueryPoolCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     queryType: vk.QueryType,
     queryCount: u32,
     pipelineStatistics: vk.QueryPipelineStatisticFlags,
 };
 pub const QueryPoolCreateInfo = struct_QueryPoolCreateInfo;
 pub const struct_CommandBufferAllocateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     queue: vk.Queue,
     commandBufferCount: u32,
 };
 pub const CommandBufferAllocateInfo = struct_CommandBufferAllocateInfo;
 pub const struct_ShaderModuleCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     stage: vk.ShaderStageFlagBits,
     codeSize: usize,
     pCode: [*c]const u32,
@@ -159,20 +161,20 @@ pub const struct_ShaderModuleCreateInfo = extern struct {
 };
 pub const ShaderModuleCreateInfo = struct_ShaderModuleCreateInfo;
 pub const struct_PipelineShaderStageCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     module: vk.ShaderModule,
     pEntryPoint: [*c]const u8,
     pSpecializationInfo: [*c]const vk.SpecializationInfo,
 };
 pub const PipelineShaderStageCreateInfo = struct_PipelineShaderStageCreateInfo;
 pub const struct_GraphicsPipelineCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     stageCount: u32,
     pStages: [*c]const PipelineShaderStageCreateInfo,
 };
 pub const GraphicsPipelineCreateInfo = struct_GraphicsPipelineCreateInfo;
 pub const struct_ComputePipelineCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     pStage: [*c]const PipelineShaderStageCreateInfo,
 };
 pub const ComputePipelineCreateInfo = struct_ComputePipelineCreateInfo;
@@ -214,30 +216,30 @@ pub const struct_VertexInputFormatCreateInfo = extern struct {
 };
 pub const VertexInputFormatCreateInfo = struct_VertexInputFormatCreateInfo;
 pub const struct_SamplerCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     magFilter: vk.Filter,
     minFilter: vk.Filter,
     mipmapMode: vk.SamplerMipmapMode,
     addressModeU: vk.SamplerAddressMode,
     addressModeV: vk.SamplerAddressMode,
     addressModeW: vk.SamplerAddressMode,
-    mipLodBias: f32,
-    anisotropyEnable: vk.Bool32,
-    maxAnisotropy: f32,
-    compareEnable: vk.Bool32,
-    compareOp: vk.CompareOp,
-    minLod: f32,
-    maxLod: f32,
-    borderColor: vk.BorderColor,
+    mipLodBias: f32 = 0,
+    anisotropyEnable: vk.Bool32 = 0,
+    maxAnisotropy: f32 = 0,
+    compareEnable: vk.Bool32 = 0,
+    compareOp: vk.CompareOp = .COMPARE_OP_NEVER,
+    minLod: f32 = 0,
+    maxLod: f32 = 0,
+    borderColor: vk.BorderColor = .BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
     unnormalizedCoordinates: vk.Bool32,
 };
 pub const SamplerCreateInfo = struct_SamplerCreateInfo;
 pub const struct_BufferCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     size: vk.DeviceSize,
     usage: vk.BufferUsageFlags,
-    queueFamilyIndexCount: u32,
-    pQueueFamilyIndices: [*c]const u32,
+    queueFamilyIndexCount: u32 = 0,
+    pQueueFamilyIndices: [*c]const u32 = null,
 };
 pub const BufferCreateInfo = struct_BufferCreateInfo;
 pub const struct_MappedBufferRange = extern struct {
@@ -247,7 +249,7 @@ pub const struct_MappedBufferRange = extern struct {
 };
 pub const MappedBufferRange = struct_MappedBufferRange;
 pub const struct_BufferViewCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     buffer: vk.Buffer,
     format: vk.Format,
     offset: vk.DeviceSize,
@@ -255,18 +257,18 @@ pub const struct_BufferViewCreateInfo = extern struct {
 };
 pub const BufferViewCreateInfo = struct_BufferViewCreateInfo;
 pub const struct_ImageCreateInfo = extern struct {
-    pNext: ?*const c_void,
-    flags: vk.ImageCreateFlags,
-    imageType: vk.ImageType,
+    pNext: ?*const c_void = null,
+    flags: vk.ImageCreateFlags = 0,
+    imageType: vk.ImageType = .IMAGE_TYPE_2D,
     format: vk.Format,
     extent: vk.Extent3D,
-    mipLevels: u32,
-    arrayLayers: u32,
-    samples: vk.SampleCountFlagBits,
-    tiling: vk.ImageTiling,
+    mipLevels: u32 = 1,
+    arrayLayers: u32 = 1,
+    samples: vk.SampleCountFlagBits = .SAMPLE_COUNT_1_BIT,
+    tiling: vk.ImageTiling = .IMAGE_TILING_OPTIMAL,
     usage: vk.ImageUsageFlags,
-    queueFamilyIndexCount: u32,
-    pQueueFamilyIndices: [*c]const u32,
+    queueFamilyIndexCount: u32 = 0,
+    pQueueFamilyIndices: [*c]const u32 = null,
 };
 pub const ImageCreateInfo = struct_ImageCreateInfo;
 pub const struct_ImageSubresource = extern struct {
@@ -283,23 +285,23 @@ pub const struct_SubresourceLayout = extern struct {
 };
 pub const SubresourceLayout = struct_SubresourceLayout;
 pub const struct_ImageSubresourceRange = extern struct {
-    baseMipLevel: u32,
-    levelCount: u32,
-    baseArrayLayer: u32,
-    layerCount: u32,
+    baseMipLevel: u32 = 0,
+    levelCount: u32 = 1,
+    baseArrayLayer: u32 = 0,
+    layerCount: u32 = 1,
 };
 pub const ImageSubresourceRange = struct_ImageSubresourceRange;
 pub const struct_ImageViewCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     image: vk.Image,
     viewType: vk.ImageViewType,
     format: vk.Format,
-    components: vk.ComponentMapping,
-    subresourceRange: ImageSubresourceRange,
+    components: vk.ComponentMapping = vk.ComponentMapping{},
+    subresourceRange: ImageSubresourceRange = ImageSubresourceRange{},
 };
 pub const ImageViewCreateInfo = struct_ImageViewCreateInfo;
 pub const struct_FramebufferCreateInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     attachmentCount: u32,
     pAttachments: [*c]const vk.ImageView,
     width: u32,
@@ -308,13 +310,13 @@ pub const struct_FramebufferCreateInfo = extern struct {
 };
 pub const FramebufferCreateInfo = struct_FramebufferCreateInfo;
 pub const struct_InputAssemblyState = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     topology: vk.PrimitiveTopology,
     primitiveRestartEnable: vk.Bool32,
 };
 pub const InputAssemblyState = struct_InputAssemblyState;
 pub const struct_RasterizationState = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     depthClampEnable: vk.Bool32,
     rasterizerDiscardEnable: vk.Bool32,
     polygonMode: vk.PolygonMode,
@@ -324,7 +326,7 @@ pub const struct_RasterizationState = extern struct {
 };
 pub const RasterizationState = struct_RasterizationState;
 pub const struct_MultisampleState = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     rasterizationSamples: vk.SampleCountFlagBits,
     sampleShadingEnable: vk.Bool32,
     minSampleShading: f32,
@@ -337,11 +339,11 @@ pub const struct_StencilOpState = extern struct {
     failOp: vk.StencilOp,
     passOp: vk.StencilOp,
     depthFailOp: vk.StencilOp,
-    compareOp: vk.CompareOp,
+    compareOp: vk.CompareOp = .COMPARE_OP_NEVER,
 };
 pub const StencilOpState = struct_StencilOpState;
 pub const struct_DepthStencilState = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     depthTestEnable: vk.Bool32,
     depthWriteEnable: vk.Bool32,
     depthCompareOp: vk.CompareOp,
@@ -363,7 +365,7 @@ pub const struct_ColorBlendAttachmentState = extern struct {
 };
 pub const ColorBlendAttachmentState = struct_ColorBlendAttachmentState;
 pub const struct_ColorBlendState = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     logicOpEnable: vk.Bool32,
     logicOp: vk.LogicOp,
     attachmentCount: u32,
@@ -372,12 +374,12 @@ pub const struct_ColorBlendState = extern struct {
 pub const ColorBlendState = struct_ColorBlendState;
 pub const struct_AttachmentInfo = extern struct {
     loadOp: vk.AttachmentLoadOp,
-    storeOp: vk.AttachmentStoreOp,
+    storeOp: vk.AttachmentStoreOp = .ATTACHMENT_STORE_OP_STORE,
     clearValue: vk.ClearValue,
 };
 pub const AttachmentReference = struct_AttachmentInfo;
 pub const struct_RenderPassBeginInfo = extern struct {
-    pNext: ?*const c_void,
+    pNext: ?*const c_void = null,
     framebuffer: Framebuffer,
     attachmentCount: u32,
     pAttachments: [*c]const struct_AttachmentInfo,
@@ -390,16 +392,16 @@ pub const struct_BufferCopy = extern struct {
 };
 pub const BufferCopy = struct_BufferCopy;
 pub const struct_ImageSubresourceLayers = extern struct {
-    mipLevel: u32,
-    baseArrayLayer: u32,
-    layerCount: u32,
+    mipLevel: u32 = 0,
+    baseArrayLayer: u32 = 0,
+    layerCount: u32 = 1,
 };
 pub const ImageSubresourceLayers = struct_ImageSubresourceLayers;
 pub const struct_ImageSubDataInfo = extern struct {
-    dataRowLength: u32,
-    dataImageHeight: u32,
-    imageSubresource: ImageSubresourceLayers,
-    imageOffset: vk.Offset3D,
+    dataRowLength: u32 = 0,
+    dataImageHeight: u32 = 0,
+    imageSubresource: ImageSubresourceLayers = ImageSubresourceLayers{},
+    imageOffset: vk.Offset3D = vk.Offset3D{},
     imageExtent: vk.Extent3D,
 };
 pub const ImageSubDataInfo = struct_ImageSubDataInfo;

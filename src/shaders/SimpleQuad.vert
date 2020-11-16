@@ -28,5 +28,5 @@ void main()
     vs_out.pos = in_Position;
     vs_out.normal = in_Normal;
     vs_out.texCoord = in_TexCoord;    
-    gl_Position = proj * view * model * vec4(in_Position, 1.0f);
+    gl_Position = vec4(in_Position, 1.0f);
 }
