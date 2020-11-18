@@ -39,7 +39,7 @@ pub fn load(allocator: *Allocator, width: u32) !SerialModel {
 fn discretize(x: [8]f32, from: f32, to: f32) [8]u8 {
     var res: [8]u8 = undefined;
     for (x) |val, i| {
-        const v = (val - from) / to - from;
+        const v = (val - from) / (to - from);
         res[i] = @floatToInt(u8, std.math.clamp(v, 0, 1) * 255);
     }
     return res;

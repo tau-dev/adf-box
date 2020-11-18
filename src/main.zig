@@ -1,4 +1,7 @@
 const std = @import("std");
+const stdout = std.io.getStdOut().outStream();
+const allocator = std.heap.c_allocator;
+
 const base = @import("base.zig");
 const c = base.c;
 const vk = base.vk;
@@ -6,7 +9,7 @@ const vez = base.vez;
 const convert = base.convert;
 const roundUp = base.roundUp;
 const VulkanError = base.VulkanError;
-const stdout = std.io.getStdOut().outStream();
+const getKey = base.getKey;
 
 const mat = @import("zalgebra");
 const mat4 = mat.mat4;
@@ -25,19 +28,16 @@ const Vertex = struct {
     v: f32,
 };
 
-//[4][4]f32;
-
-var id = mat4.identity(); // [4][4]f32{
-//     .{ 1, 0, 0, 0 },
-//     .{ 0, 1, 0, 0 },
-//     .{ 0, 0, 1, 0 },
-//     .{ 0, 0, 0, 1 },
-// };
-
 const UniformBuffer = struct {
-    model: mat4,
     view: mat4,
-    projection: mat4,
+    // model: mat4,
+    // projection: mat4,
+    position: mat.vec4,
+    buffer_size: i32,
+    fov: f32,
+    margin: f32 = 0.001,
+    limit: f32 = 10,
+    screeen_size: mat.vec2,
 };
 
 fn bytewiseCopy(comptime T: type, data: []const T, dest: [*]u8) void {
@@ -121,12 +121,13 @@ const Image = struct {
             .addressModeV = addressMode, // default?
             .addressModeW = addressMode, // default?
             .unnormalizedCoordinates = 0,
+            .borderColor = .BORDER_COLOR_INT_OPAQUE_BLACK,
         };
         try convert(vez.createSampler(base.getDevice(), &samplerInfo, &self.sampler));
     }
 
     fn cmdBind(self: @This(), set: u32, binding: u32) void {
-        vez.cmdBindImageView(renderTexture.view, renderTexture.sampler, set, binding, 0);
+        vez.cmdBindImageView(self.view, self.sampler, set, binding, 0); // self.sampler
     }
 
     fn deinit(self: @This(), device: vk.Device) void {
@@ -148,7 +149,11 @@ var computePipeline: PipelineDesc = undefined;
 var commandBuffer: vk.CommandBuffer = null;
 var customCallback: vk.DebugUtilsMessengerEXT = null;
 
-const allocator = std.heap.c_allocator;
+var lastPos = [2]i32{ 0, 0 };
+var view = mat.vec2{ .x = 0, .y = 0 };
+var position = vec.new(0.5, 0.5, 0.5);
+var lookMode = false;
+var bufferSize: i32 = 0;
 
 export fn debugCallback(
     severity: vk.DebugUtilsMessageSeverityFlagBitsEXT,
@@ -179,8 +184,13 @@ pub fn main() anyerror!void {
         .initialize = initialize,
         .cleanup = cleanup,
         .draw = draw,
-        .onResize = onResize,
         .update = update,
+        .callbacks = .{
+            .resize = onResize,
+            .mousePos = onMousePos,
+            .mouseButton = onMouseButton,
+            .key = onKey,
+        },
     });
 }
 
@@ -268,18 +278,69 @@ fn onResize(width: u32, height: u32) !void {
     vez.freeCommandBuffers(base.getDevice(), 1, &commandBuffer);
     try createCommandBuffer();
 }
+fn onMousePos(x: i32, y: i32) anyerror!void {}
+fn onKey(button: i32, down: bool) anyerror!void {}
+fn onMouseButton(button: i32, down: bool, x: i32, y: i32) anyerror!void {
+    if (down) {
+        lookMode = !lookMode;
+        c.glfwSetInputMode(base.getWindow(), c.CURSOR, if (lookMode) c.CURSOR_HIDDEN else c.CURSOR_NORMAL);
+    }
+}
 
-var runtime: f32 = 0;
-fn update(deltaTime: f32) !void {
+fn movePos(v: vec, time: f32) void {
+    position = position.add(v.scale(transformSpeed * time));
+}
+fn matmul(matrix: mat4, v: vec) vec {
+    var r = matrix.mult_by_vec4(mat.vec4.new(v.x, v.y, v.z, 1));
+    return vec.new(r.x, r.y, r.z);
+}
+
+const turnSpeed = 0.1;
+const transformSpeed = 0.1;
+fn update(delta: f32) !void {
     var size = base.getWindowSize();
-    runtime += deltaTime;
-    // Calculate appropriate matrices for the current frame.
+    if (lookMode) {
+        const newPos = base.getCursorPos();
+        var mouseDelta = mat.vec2{
+            .x = @intToFloat(f32, -lastPos[0] + newPos[0]),
+            .y = @intToFloat(f32, lastPos[1] - newPos[1]),
+        };
+
+        view.x = try std.math.mod(f32, view.x + mouseDelta.x * turnSpeed, 360);
+        view.y = std.math.clamp(view.y + mouseDelta.y * turnSpeed, -90, 90);
+
+        c.glfwSetCursorPos(base.getWindow(), @intToFloat(f64, size[0] / 2), @intToFloat(f64, size[1] / 2));
+    }
+    lastPos = base.getCursorPos();
+
+    var viewMat = mat4.identity().rotate(view.x, vec.up()).rotate(view.y, vec.right());
+
+    if (getKey(c.KEY_W) or getKey(c.KEY_KP_8)) {
+        movePos(matmul(viewMat, vec.new(0, 0, 1)), delta);
+    }
+    if (getKey(c.KEY_S) or getKey(c.KEY_KP_2)) {
+        movePos(matmul(viewMat, vec.new(0, 0, -1)), delta);
+    }
+    if (getKey(c.KEY_D) or getKey(c.KEY_KP_6)) {
+        movePos(matmul(viewMat, vec.new(1, 0, 0)), delta);
+    }
+    if (getKey(c.KEY_A) or getKey(c.KEY_KP_4)) {
+        movePos(matmul(viewMat, vec.new(-1, 0, 0)), delta);
+    }
+    if (getKey(c.KEY_LEFT_SHIFT) or getKey(c.KEY_KP_9)) {
+        movePos(vec.new(0, -1, 0), delta);
+    }
+    if (getKey(c.KEY_LEFT_CONTROL) or getKey(c.KEY_KP_3)) {
+        movePos(vec.new(0, 1, 0), delta);
+    }
+
     var ub = UniformBuffer{
-        .model = mat4.rotate(id, runtime * 10, vec.forward()),
-        .view = mat.look_at(vec.new(2, 2, 2), vec.new(0, 0, 0), vec.forward()),
-        .projection = mat.perspective(45, @intToFloat(f32, size[0]) / @intToFloat(f32, size[1]), 0.1, 10), //glm::perspective(glm::radians(45.0f), width / static_cast<float>(height), 0.1f, 10.0f),
+        .view = viewMat,
+        .position = mat.vec4.new(position.x, position.y, position.z, 1),
+        .buffer_size = bufferSize,
+        .fov = 1,
+        .screeen_size = mat.vec2.new(@intToFloat(f32, size[0]), @intToFloat(f32, size[1])),
     };
-    ub.projection.data[1][1] *= -1;
 
     var data: *UniformBuffer = undefined;
     try convert(vez.mapBuffer(base.getDevice(), uniformBuffer, 0, @sizeOf(UniformBuffer), @ptrCast(*?*c_void, &data)));
@@ -340,6 +401,7 @@ fn createModel() !void {
     };
     try convert(vez.vezImageSubData(base.getDevice(), values.texture, &subDataInfo, data.values.ptr));
 
+    bufferSize = @intCast(i32, data.tree.len);
     try octData.init(base.getDevice(), vk.BUFFER_USAGE_STORAGE_BUFFER_BIT, data.tree.len * @sizeOf(i32) * 2);
     try octData.load([2]i32, data.tree);
 }
@@ -357,15 +419,15 @@ fn createPipeline() !void {
         .shaderModules = try allocator.alloc(vk.ShaderModule, 2),
     };
     try base.createPipeline(allocator, &[_]base.PipelineShaderInfo{
-        .{ .filename = "SimpleQuad.vert", .stage = .SHADER_STAGE_VERTEX_BIT },
-        .{ .filename = "SimpleQuad.frag", .stage = .SHADER_STAGE_FRAGMENT_BIT },
+        .{ .filename = "Vertex.vert", .spirv = true, .stage = .SHADER_STAGE_VERTEX_BIT },
+        .{ .filename = "Fragment.frag", .spirv = true, .stage = .SHADER_STAGE_FRAGMENT_BIT },
     }, &drawPipeline.pipeline, drawPipeline.shaderModules);
 
     computePipeline = PipelineDesc{
         .shaderModules = try allocator.alloc(vk.ShaderModule, 1),
     };
     try base.createPipeline(allocator, &[_]base.PipelineShaderInfo{
-        .{ .filename = "SimpleQuad.comp", .stage = .SHADER_STAGE_COMPUTE_BIT },
+        .{ .filename = "Compute.comp", .spirv = true, .stage = .SHADER_STAGE_COMPUTE_BIT },
     }, &computePipeline.pipeline, computePipeline.shaderModules);
 }
 
@@ -382,9 +444,11 @@ fn createCommandBuffer() !void {
 
     vez.cmdBindPipeline(computePipeline.pipeline);
     vez.cmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
+    vez.cmdBindBuffer(octData.handle, 0, vk.WHOLE_SIZE, 0, 1, 0);
+    values.cmdBind(0, 2);
     renderTexture.cmdBind(0, 3);
     const extents = base.getWindowSize();
-    const groupSize = 32;
+    const groupSize = 8;
     vez.cmdDispatch(roundUp(extents[0], groupSize), roundUp(extents[1], groupSize), 1);
 
     base.cmdSetFullViewport();

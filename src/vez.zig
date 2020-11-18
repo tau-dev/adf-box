@@ -230,7 +230,7 @@ pub const struct_SamplerCreateInfo = extern struct {
     compareOp: vk.CompareOp = .COMPARE_OP_NEVER,
     minLod: f32 = 0,
     maxLod: f32 = 0,
-    borderColor: vk.BorderColor = .BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+    borderColor: vk.BorderColor,
     unnormalizedCoordinates: vk.Bool32,
 };
 pub const SamplerCreateInfo = struct_SamplerCreateInfo;

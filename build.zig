@@ -19,15 +19,27 @@ pub fn build(b: *Builder) void {
     exe.addLibPath("../zforeign/V-EZ/Bin/x86_64/");
     exe.addPackagePath("zalgebra", "zalgebra/src/main.zig");
 
+    var d = std.fs.cwd().openDir("src/shaders", .{ .access_sub_paths = false, .iterate = true }) catch unreachable;
+    defer d.close();
+    var it = d.iterate();
+    while (it.next() catch unreachable) |entry| {
+        if (entry.kind == .File) {
+            var source = std.fs.path.join(b.allocator, &[_][]const u8{ "src/shaders", entry.name }) catch unreachable;
+            var compile = std.fs.path.join(b.allocator, &[_][]const u8{ "shaders-bin", entry.name }) catch unreachable;
+            var dest = std.fs.path.join(b.allocator, &[_][]const u8{ "shaders", entry.name }) catch unreachable;
+
+            var compileShader = b.addSystemCommand(&[_][]const u8{ "glslangValidator", "-V", source, "-o", compile });
+            var installShader = b.addInstallFileWithDir(compile, .Bin, dest);
+            installShader.step.dependOn(&compileShader.step);
+            exe.step.dependOn(&installShader.step);
+        }
+    }
+
     exe.linkSystemLibrary("VEZ");
     exe.linkSystemLibrary("glfw");
     exe.linkSystemLibrary("vulkan");
     exe.linkSystemLibrary("c");
     exe.install();
-
-    exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.comp", .Bin, "shaders/SimpleQuad.comp").step);
-    exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.vert", .Bin, "shaders/SimpleQuad.vert").step);
-    exe.step.dependOn(&b.addInstallFileWithDir("src/shaders/SimpleQuad.frag", .Bin, "shaders/SimpleQuad.frag").step);
 
     const run_cmd = exe.run();
     run_cmd.step.dependOn(b.getInstallStep());

@@ -12,6 +12,7 @@ const NameSet = std.AutoHashMap([256]u8, void);
 
 pub const PipelineShaderInfo = struct {
     filename: []const u8,
+    spirv: bool,
     stage: vk.ShaderStageFlagBits,
 };
 
@@ -47,6 +48,9 @@ var surface: vk.SurfaceKHR = null;
 var device: vk.Device = null;
 var swapchain: vez.Swapchain = null;
 
+var keyMap: [c.KEY_LAST]bool = std.mem.zeroes([c.KEY_LAST]bool);
+var callbacks: Callbacks = undefined;
+
 pub fn getInstance() vk.Instance {
     return instance;
 }
@@ -68,11 +72,20 @@ pub fn getColorAttachment() vk.Image {
 pub fn getColorAttachmentView() vk.ImageView {
     return framebuffer.colorImageView;
 }
-pub fn getWindow() *GLFWwindow {
+pub fn getWindow() *c.Window {
     return window;
 }
 pub fn getWindowSize() [2]u32 {
     return .{ @intCast(u32, windowWidth), @intCast(u32, windowHeight) };
+}
+pub fn getCursorPos() [2]i32 {
+    var x: f64 = 0;
+    var y: f64 = 0;
+    c.glfwGetCursorPos(window, &x, &y);
+    return .{ @floatToInt(i32, x), @floatToInt(i32, y) };
+}
+pub fn getKey(key: c_int) bool {
+    return keyMap[@intCast(usize, key)];
 }
 pub fn roundUp(a: u32, b: u32) u32 {
     return (a + b - 1) / b;
@@ -88,13 +101,20 @@ const FrameBuffer = struct {
     /// Free previous allocations.
     fn deinit(self: FrameBuffer, dev: vk.Device) void {
         if (framebuffer.handle) |hndl| {
-            vez.vezDestroyFramebuffer(dev, self.handle);
-            vez.vezDestroyImageView(dev, self.colorImageView);
-            vez.vezDestroyImageView(dev, self.depthStencilImageView);
-            vez.vezDestroyImage(dev, self.colorImage);
-            vez.vezDestroyImage(dev, self.depthStencilImage);
+            vez.destroyFramebuffer(dev, self.handle);
+            vez.destroyImageView(dev, self.colorImageView);
+            vez.destroyImageView(dev, self.depthStencilImageView);
+            vez.destroyImage(dev, self.colorImage);
+            vez.destroyImage(dev, self.depthStencilImage);
         }
     }
+};
+
+const Callbacks = struct {
+    resize: fn (width: u32, height: u32) anyerror!void,
+    mousePos: fn (x: i32, y: i32) anyerror!void,
+    mouseButton: fn (button: i32, down: bool, x: i32, y: i32) anyerror!void,
+    key: fn (key: i32, down: bool) anyerror!void,
 };
 
 const Application = struct {
@@ -102,14 +122,13 @@ const Application = struct {
     initialize: fn () anyerror!void,
     cleanup: fn () anyerror!void,
     draw: fn () anyerror!void,
-    onResize: fn (width: u32, height: u32) anyerror!void,
     update: fn (timeElapsed: f32) anyerror!void,
+    callbacks: Callbacks,
 };
-var resize: fn (width: u32, height: u32) anyerror!void = undefined;
 
 // abstracc
 
-fn MakeVkVersion(major: u32, minor: anytype, patch: anytype) u32 {
+fn makeVkVersion(major: u32, minor: anytype, patch: anytype) u32 {
     return (major << 22) | ((minor << 12) | patch);
 }
 
@@ -215,12 +234,12 @@ fn getInstanceLayers(allocator: *Allocator) !NameSet {
 
     // Enumerate all available instance availableLayers.
     var layerCount: u32 = 0;
-    try convert(vez.vezEnumerateInstanceLayerProperties(&layerCount, null));
+    try convert(vez.enumerateInstanceLayerProperties(&layerCount, null));
 
     var layerProperties = try allocator.alloc(vk.LayerProperties, layerCount);
     defer allocator.free(layerProperties);
 
-    try convert(vez.vezEnumerateInstanceLayerProperties(&layerCount, layerProperties.ptr));
+    try convert(vez.enumerateInstanceLayerProperties(&layerCount, layerProperties.ptr));
     var set = NameSet.init(allocator);
     for (layerProperties) |prop| {
         _ = try set.put(prop.layerName, .{});
@@ -236,7 +255,7 @@ fn createFramebuffer() !void {
 
     // Get the swapchain's current surface format.
     var swapchainFormat: vk.SurfaceFormatKHR = undefined;
-    vez.vezGetSwapchainSurfaceFormat(swapchain, &swapchainFormat);
+    vez.getSwapchainSurfaceFormat(swapchain, &swapchainFormat);
 
     // Create the color image for the framebuffer.
     var imageCreateInfo = vez.ImageCreateInfo{
@@ -246,7 +265,7 @@ fn createFramebuffer() !void {
         .tiling = .IMAGE_TILING_OPTIMAL,
         .usage = vk.IMAGE_USAGE_TRANSFER_SRC_BIT | vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
     };
-    try convert(vez.vezCreateImage(device, vez.MEMORY_GPU_ONLY, &imageCreateInfo, &framebuffer.colorImage));
+    try convert(vez.createImage(device, vez.MEMORY_GPU_ONLY, &imageCreateInfo, &framebuffer.colorImage));
 
     // Create the image view for binding the texture as a resource.
     var imageViewCreateInfo = vez.ImageViewCreateInfo{
@@ -254,19 +273,19 @@ fn createFramebuffer() !void {
         .viewType = .IMAGE_VIEW_TYPE_2D,
         .format = imageCreateInfo.format,
     };
-    try convert(vez.vezCreateImageView(device, &imageViewCreateInfo, &framebuffer.colorImageView));
+    try convert(vez.createImageView(device, &imageViewCreateInfo, &framebuffer.colorImageView));
 
     // Create the depth image for the m_framebuffer.
     imageCreateInfo.format = .FORMAT_D32_SFLOAT;
     imageCreateInfo.extent = vk.Extent3D{ .width = size[0], .height = size[1], .depth = 1 };
     imageCreateInfo.usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    try convert(vez.vezCreateImage(device, vez.MEMORY_GPU_ONLY, &imageCreateInfo, &framebuffer.depthStencilImage));
+    try convert(vez.createImage(device, vez.MEMORY_GPU_ONLY, &imageCreateInfo, &framebuffer.depthStencilImage));
 
     // Create the image view for binding the texture as a resource.
     imageViewCreateInfo.image = framebuffer.depthStencilImage;
     imageViewCreateInfo.viewType = .IMAGE_VIEW_TYPE_2D;
     imageViewCreateInfo.format = imageCreateInfo.format;
-    try convert(vez.vezCreateImageView(device, &imageViewCreateInfo, &framebuffer.depthStencilImageView));
+    try convert(vez.createImageView(device, &imageViewCreateInfo, &framebuffer.depthStencilImageView));
 
     // Create the m_framebuffer.
     var attachments: []vk.ImageView = &[_]vk.ImageView{ framebuffer.colorImageView, framebuffer.depthStencilImageView };
@@ -277,16 +296,18 @@ fn createFramebuffer() !void {
         .height = size[1],
         .layers = 1,
     };
-    try convert(vez.vezCreateFramebuffer(device, &framebufferCreateInfo, &framebuffer.handle));
+    try convert(vez.createFramebuffer(device, &framebufferCreateInfo, &framebuffer.handle));
 }
 
-fn createShaderModule(allocator: *Allocator, filename: []const u8, entryPoint: []const u8, stage: vk.ShaderStageFlagBits) !vk.ShaderModule {
+fn createShaderModule(allocator: *Allocator, filename: []const u8, spirv: bool, entryPoint: []const u8, stage: vk.ShaderStageFlagBits) !vk.ShaderModule {
     // Load the GLSL shader code from disk.
     var file = try std.fs.cwd().openFile(filename, .{});
     const len = try file.getEndPos();
 
-    const code = try allocator.alignedAlloc(u8, @alignOf(u32), len);
+    const code = try allocator.alignedAlloc(u8, @alignOf(u32), len + 1);
     defer allocator.free(code);
+    code[len] = 0;
+
     const readlen = try file.read(code);
     if (readlen != len)
         return error.CouldNotReadShaderFile;
@@ -300,27 +321,27 @@ fn createShaderModule(allocator: *Allocator, filename: []const u8, entryPoint: [
         .pCode = null,
         .pGLSLSource = null,
     };
-    if (std.mem.endsWith(u8, filename, ".spv")) {
+    if (spirv) {
         createInfo.pCode = @ptrCast([*]const u32, code.ptr);
     } else {
         createInfo.pGLSLSource = code.ptr;
     }
 
     var shaderModule: vk.ShaderModule = null;
-    var result = vez.vezCreateShaderModule(device, &createInfo, &shaderModule);
+    var result = vez.createShaderModule(device, &createInfo, &shaderModule);
     if (result != .SUCCESS) {
         if (shaderModule == null)
             return error.CouldNotCreateShader;
 
         // If shader module creation failed but error is from GLSL compilation, get the error log.
         var infoLogSize: u32 = 0;
-        vez.vezGetShaderModuleInfoLog(shaderModule, &infoLogSize, null);
+        vez.getShaderModuleInfoLog(shaderModule, &infoLogSize, null);
 
         var infoLog = try allocator.alloc(u8, infoLogSize);
         std.mem.set(u8, infoLog, 0);
-        vez.vezGetShaderModuleInfoLog(shaderModule, &infoLogSize, &infoLog[0]);
+        vez.getShaderModuleInfoLog(shaderModule, &infoLogSize, &infoLog[0]);
 
-        vez.vezDestroyShaderModule(device, shaderModule);
+        vez.destroyShaderModule(device, shaderModule);
 
         try stdout.print("{}\n", .{infoLog});
         return error.CouldNotCompile;
@@ -339,7 +360,7 @@ pub fn createPipeline(allocator: *Allocator, pipelineShaderInfo: []const Pipelin
     for (pipelineShaderInfo) |info, i| {
         var filename = try std.fs.path.join(allocator, &[_][]const u8{ exe_path, "shaders", info.filename });
         defer allocator.free(filename);
-        var shaderModule = try createShaderModule(allocator, filename, "main", info.stage);
+        var shaderModule = try createShaderModule(allocator, filename, info.spirv, "main", info.stage);
 
         shaderStageCreateInfo[i] = .{
             .module = shaderModule,
@@ -357,13 +378,13 @@ pub fn createPipeline(allocator: *Allocator, pipelineShaderInfo: []const Pipelin
         const pipelineCreateInfo = vez.ComputePipelineCreateInfo{
             .pStage = shaderStageCreateInfo.ptr,
         };
-        try convert(vez.vezCreateComputePipeline(device, &pipelineCreateInfo, pPipeline));
+        try convert(vez.createComputePipeline(device, &pipelineCreateInfo, pPipeline));
     } else {
         const pipelineCreateInfo = vez.GraphicsPipelineCreateInfo{
             .stageCount = @intCast(u32, shaderStageCreateInfo.len),
             .pStages = shaderStageCreateInfo.ptr,
         };
-        try convert(vez.vezCreateGraphicsPipeline(device, &pipelineCreateInfo, pPipeline));
+        try convert(vez.createGraphicsPipeline(device, &pipelineCreateInfo, pPipeline));
     }
 }
 
@@ -442,12 +463,12 @@ fn setWindowCenter(wndw: *c.Window) !void {
 
 fn props(dev: vk.PhysicalDevice) vk.PhysicalDeviceProperties {
     var properties: vk.PhysicalDeviceProperties = undefined;
-    vez.vezGetPhysicalDeviceProperties(dev, &properties);
+    vez.getPhysicalDeviceProperties(dev, &properties);
     return properties;
 }
 
 pub fn run(allocator: *Allocator, app: Application) !void {
-    resize = app.onResize;
+    callbacks = app.callbacks;
     var availableLayers = try getInstanceLayers(allocator);
     defer availableLayers.deinit();
 
@@ -478,9 +499,9 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     var result: vk.Result = undefined;
     var appInfo = vez.ApplicationInfo{
         .pApplicationName = NAME,
-        .applicationVersion = MakeVkVersion(1, 0, 0),
+        .applicationVersion = makeVkVersion(1, 0, 0),
         .pEngineName = "testEngine",
-        .engineVersion = MakeVkVersion(0, 0, 0),
+        .engineVersion = makeVkVersion(0, 0, 0),
     };
     var createInfo = vez.InstanceCreateInfo{
         .pApplicationInfo = &appInfo,
@@ -489,17 +510,17 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         .enabledExtensionCount = instanceExtensionCount,
         .ppEnabledExtensionNames = instanceExtensions.ptr,
     };
-    try convert(vez.vezCreateInstance(&createInfo, &instance));
+    try convert(vez.createInstance(&createInfo, &instance));
 
     // Enumerate all attached physical devices.
     var physicalDeviceCount: u32 = 0;
-    try convert(vez.vezEnumeratePhysicalDevices(instance, &physicalDeviceCount, null));
+    try convert(vez.enumeratePhysicalDevices(instance, &physicalDeviceCount, null));
     if (physicalDeviceCount == 0) {
         return error.NoPhysicalDeviceFound;
     }
     var physicalDevices = try allocator.alloc(vk.PhysicalDevice, physicalDeviceCount);
     defer allocator.free(physicalDevices);
-    try convert(vez.vezEnumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.ptr));
+    try convert(vez.enumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.ptr));
 
     for (physicalDevices) |pdevice, i| {
         const name = @ptrCast([*:0]const u8, &props(pdevice).deviceName);
@@ -524,14 +545,14 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         .enabledExtensionCount = @intCast(u32, deviceExtensions.len),
         .ppEnabledExtensionNames = deviceExtensions.ptr,
     };
-    try convert(vez.vezCreateDevice(physicalDevice, &deviceCreateInfo, &device));
+    try convert(vez.createDevice(physicalDevice, &deviceCreateInfo, &device));
 
     // Set callbacks.
-    _ = c.glfwSetWindowSizeCallback(window, WindowSizeCallback);
-    // c.glfwSetCursorPosCallback(window, CursorPosCallback);
-    // c.glfwSetMouseButtonCallback(window, MouseButtonCallback);
+    _ = c.glfwSetWindowSizeCallback(window, windowSizeCallback);
+    _ = c.glfwSetCursorPosCallback(window, cursorPosCallback);
+    _ = c.glfwSetMouseButtonCallback(window, mouseButtonCallback);
     // c.glfwSetScrollCallback(window, MouseScrollCallback);
-    // c.glfwSetKeyCallback(window, KeyCallback);
+    _ = c.glfwSetKeyCallback(window, keyCallback);
 
     // Create a surface from the GLFW window handle.
     try convert(c.glfwCreateWindowSurface(instance, window, null, &surface));
@@ -543,7 +564,8 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         .format = vk.SurfaceFormatKHR{ .format = .FORMAT_B8G8R8A8_UNORM, .colorSpace = .COLOR_SPACE_SRGB_NONLINEAR_KHR },
         .tripleBuffer = vk.TRUE,
     };
-    try convert(vez.vezCreateSwapchain(device, &swapchainCreateInfo, &swapchain));
+    try convert(vez.createSwapchain(device, &swapchainCreateInfo, &swapchain));
+    try convert(vez.vezSwapchainSetVSync(swapchain, vk.TRUE));
 
     if (manageFramebuffer) {
         try createFramebuffer();
@@ -564,10 +586,15 @@ pub fn run(allocator: *Allocator, app: Application) !void {
 
         // Update the application.
         var curTime = c.glfwGetTime();
+        var pad = 0.01 - (curTime - lastTime);
+        if (pad > 0) {
+            std.time.sleep(@floatToInt(u64, 1000000000 * pad));
+        }
+        curTime = c.glfwGetTime();
         var delta = curTime - lastTime;
+        lastTime = curTime;
         elapsedTime += delta;
         try app.update(@floatCast(f32, delta));
-        lastTime = curTime;
 
         try app.draw();
 
@@ -581,7 +608,7 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         }
     }
 
-    try convert(vez.vezDeviceWaitIdle(device));
+    try convert(vez.deviceWaitIdle(device));
 
     try app.cleanup();
 
@@ -589,13 +616,13 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         framebuffer.deinit(device);
     }
 
-    vez.vezDestroySwapchain(device, swapchain);
-    vez.vezDestroyDevice(device);
+    vez.destroySwapchain(device, swapchain);
+    vez.destroyDevice(device);
     vk.vkDestroySurfaceKHR(instance, surface, null);
-    vez.vezDestroyInstance(instance);
+    vez.destroyInstance(instance);
 }
 
-export fn WindowSizeCallback(wndw: ?*c.Window, width: c_int, height: c_int) callconv(.C) void {
+export fn windowSizeCallback(wndw: ?*c.Window, width: c_int, height: c_int) callconv(.C) void {
     // windowWidth = width;
     // windowHeight = height;
 
@@ -608,5 +635,29 @@ export fn WindowSizeCallback(wndw: ?*c.Window, width: c_int, height: c_int) call
         createFramebuffer() catch unreachable;
     }
 
-    resize(@intCast(u32, windowWidth), @intCast(u32, windowHeight)) catch unreachable;
+    callbacks.resize(@intCast(u32, windowWidth), @intCast(u32, windowHeight)) catch unreachable;
+}
+
+export fn cursorPosCallback(wndw: ?*c.Window, x: f64, y: f64) void {
+    callbacks.mousePos(@floatToInt(i32, x), @floatToInt(i32, y)) catch unreachable;
+}
+
+export fn mouseButtonCallback(wndw: ?*c.Window, button: c_int, action: c_int, mods: c_int) void {
+    var p = getCursorPos();
+    switch (action) {
+        c.PRESS => callbacks.mouseButton(@intCast(i32, button), true, p[0], p[1]) catch unreachable,
+        c.RELEASE => callbacks.mouseButton(@intCast(i32, button), false, p[0], p[1]) catch unreachable,
+        else => return,
+    }
+}
+
+export fn keyCallback(wndw: ?*c.Window, key: c_int, scancode: c_int, action: c_int, mods: c_int) void {
+    var p = getCursorPos();
+    var press = switch (action) {
+        c.PRESS => true,
+        c.RELEASE => false,
+        else => return,
+    };
+    keyMap[@intCast(usize, key)] = press;
+    callbacks.key(@intCast(i32, key), press) catch unreachable;
 }

@@ -8,18 +8,24 @@
 		}
 	],
 	"build_systems":
-    [
-        {
-            "name": "Zig Build",
-            "cmd": ["zig", "build"],
-            "file_regex": "^(..[^:]*):([0-9]+):?([0-9]+)?:? (.*)$",
-            "working_dir": "$project_path",
-            "variants": [ ]
-        },
-        {
-            "name": "Run",
-            "cmd": ["zig", "run"],
-            "working_dir": "$project_path"
-        }
-    ]
+	[
+		{
+			"name": "Zig Build",
+			"cmd": ["zig", "build"],
+			"file_regex": "^(..[^:]*):([0-9]+):?([0-9]+)?:? (.*)$",
+			"working_dir": "$project_path"
+		},
+		{
+			"name": "Run",
+			"cmd": ["./zig-cache/bin/v-ez-test" ],
+			"working_dir": "$project_path"
+		}
+	],
+	"settings":
+	{
+		"LSP":
+		{
+			"zig": { "enabled": true }
+		}
+	}
 }
