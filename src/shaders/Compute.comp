@@ -3,7 +3,7 @@
 #define groupSize 8
 #define subdiv 2
 #define vpercell 2
-#define textureWidth 32
+#define textureWidth 2048
 
 layout (local_size_x = groupSize, local_size_y = groupSize, local_size_z = 1 ) in;
 
@@ -24,7 +24,7 @@ layout(binding = 1) restrict readonly buffer octDataBuffer {
 layout(binding = 2) uniform sampler2D values;
 layout(binding = 3) uniform restrict writeonly image2D dest;
 
-uint index = 0;
+int index = 0;
 vec2 dimensions;
 
 vec3 lower = vec3(0, 0, 0);
@@ -37,14 +37,13 @@ float sam(vec2 p)
 
 float sample_at(vec3 d, float scale)
 {
-    vec2 p = ivec2(
-    	(index * vpercell*vpercell) % textureWidth,
-    	index * vpercell*vpercell / textureWidth * vpercell);
+    int cellindex = index * vpercell*vpercell;
+    vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * vpercell);
 
     float loadL = sam(d.xy + p);
-    float loadH = sam(d.xy + p + vec2(2, 0));
+    float loadH = sam(d.xy + p + vec2(vpercell, 0));
     float result = (mix(loadL, loadH, d.z) - .25) * scale * 4;
-    return result;// - .2 * result * result;
+    return result;
 }
 
 float interpol_world(vec3 pos)
@@ -57,7 +56,7 @@ vec3 gradient(vec3 pos)
 {
     vec3 d = clamp((pos - lower) / scale, 0, 1);
     vec2 p = ivec2((index * 4) % textureWidth, index * 4 / textureWidth * 2);
-    vec2 ph = p + vec2(2, 0);
+    vec2 ph = p + vec2(vpercell, 0);
 
     vec2 xzl = (vec2(d.x, 0) + p);
 
@@ -76,7 +75,7 @@ vec3 gradient(vec3 pos)
 void scale_down(ivec3 p)
 {
     scale /= subdiv;
-    lower += p * scale;
+    lower += vec3(p) * scale;
 }
 
 
@@ -132,14 +131,14 @@ void main()
 	// return;
 
 	for (int i = 0; (prox > margin * 2 || prox < 0) && i < 100; i++) {
-		if (dot(pos, pos) > limit) {
+		if (dot(pos - vec3(0.5), pos - vec3(0.5)) > limit) {
 			imageStore(dest, pospx, vec4(0.005, 0.01, 0.2, 1.0));
 			return;
 		}
-		// find(pos);
-        prox = interpol_world(pos) * 0.3;
+		find(pos);
+        prox = interpol_world(pos);
         pos += dir * prox;// * (1 - inf.margin);
     }
-    float angle = dot(dir, abs(normalize(gradient(pos))));
+    float angle = abs(dot(dir, normalize(gradient(pos))));
 	imageStore(dest, pospx, vec4(angle, angle, angle, 1.0));
 }

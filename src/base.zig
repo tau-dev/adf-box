@@ -76,6 +76,7 @@ pub fn getWindow() *c.Window {
     return window;
 }
 pub fn getWindowSize() [2]u32 {
+    c.glfwGetWindowSize(window, &windowWidth, &windowHeight);
     return .{ @intCast(u32, windowWidth), @intCast(u32, windowHeight) };
 }
 pub fn getCursorPos() [2]i32 {
@@ -247,7 +248,7 @@ fn getInstanceLayers(allocator: *Allocator) !NameSet {
     return set;
 }
 
-fn createFramebuffer() !void {
+pub fn createFramebuffer() !void {
     framebuffer.deinit(device);
 
     // Get the current window dimension.
@@ -304,9 +305,8 @@ fn createShaderModule(allocator: *Allocator, filename: []const u8, spirv: bool, 
     var file = try std.fs.cwd().openFile(filename, .{});
     const len = try file.getEndPos();
 
-    const code = try allocator.alignedAlloc(u8, @alignOf(u32), len + 1);
+    const code = try allocator.alignedAlloc(u8, @alignOf(u32), len);
     defer allocator.free(code);
-    code[len] = 0;
 
     const readlen = try file.read(code);
     if (readlen != len)
@@ -500,7 +500,7 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     var appInfo = vez.ApplicationInfo{
         .pApplicationName = NAME,
         .applicationVersion = makeVkVersion(1, 0, 0),
-        .pEngineName = "testEngine",
+        .pEngineName = "ADF custom",
         .engineVersion = makeVkVersion(0, 0, 0),
     };
     var createInfo = vez.InstanceCreateInfo{
@@ -565,7 +565,7 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         .tripleBuffer = vk.TRUE,
     };
     try convert(vez.createSwapchain(device, &swapchainCreateInfo, &swapchain));
-    try convert(vez.vezSwapchainSetVSync(swapchain, vk.TRUE));
+    try convert(vez.vezSwapchainSetVSync(swapchain, vk.FALSE));
 
     if (manageFramebuffer) {
         try createFramebuffer();
@@ -580,16 +580,13 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     var frameCount: u32 = 0;
 
     // Message loop.
-    while (c.glfwWindowShouldClose(window) == 0 and !quitSignaled) {
+    while (!shouldQuit()) {
         // Check for window messages to process.
         c.glfwPollEvents();
 
         // Update the application.
         var curTime = c.glfwGetTime();
-        var pad = 0.01 - (curTime - lastTime);
-        if (pad > 0) {
-            std.time.sleep(@floatToInt(u64, 1000000000 * pad));
-        }
+
         curTime = c.glfwGetTime();
         var delta = curTime - lastTime;
         lastTime = curTime;
@@ -621,21 +618,28 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     vk.vkDestroySurfaceKHR(instance, surface, null);
     vez.destroyInstance(instance);
 }
+fn shouldQuit() bool {
+    return c.glfwWindowShouldClose(window) != 0 or quitSignaled;
+    // return true;
+}
 
 export fn windowSizeCallback(wndw: ?*c.Window, width: c_int, height: c_int) callconv(.C) void {
     // windowWidth = width;
     // windowHeight = height;
+    resize() catch unreachable;
+}
 
+pub fn resize() !void {
     // Wait for device to be idle.
-    convert(vk.vkDeviceWaitIdle(device)) catch unreachable;
+    try convert(vk.vkDeviceWaitIdle(device));
 
     c.glfwGetWindowSize(window, &windowWidth, &windowHeight);
     // Re-create the framebuffer.
     if (manageFramebuffer) {
-        createFramebuffer() catch unreachable;
+        try createFramebuffer();
     }
 
-    callbacks.resize(@intCast(u32, windowWidth), @intCast(u32, windowHeight)) catch unreachable;
+    try callbacks.resize(@intCast(u32, windowWidth), @intCast(u32, windowHeight));
 }
 
 export fn cursorPosCallback(wndw: ?*c.Window, x: f64, y: f64) void {
@@ -658,6 +662,8 @@ export fn keyCallback(wndw: ?*c.Window, key: c_int, scancode: c_int, action: c_i
         c.RELEASE => false,
         else => return,
     };
+    if (key == c.KEY_UNKNOWN)
+        return;
     keyMap[@intCast(usize, key)] = press;
     callbacks.key(@intCast(i32, key), press) catch unreachable;
 }

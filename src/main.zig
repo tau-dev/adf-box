@@ -151,7 +151,7 @@ var customCallback: vk.DebugUtilsMessengerEXT = null;
 
 var lastPos = [2]i32{ 0, 0 };
 var view = mat.vec2{ .x = 0, .y = 0 };
-var position = vec.new(0.5, 0.5, 0.5);
+var position = vec.new(0.5, 0.5, -0.5);
 var lookMode = false;
 var bufferSize: i32 = 0;
 
@@ -268,6 +268,9 @@ fn draw() !void {
     };
     try convert(vez.queuePresent(graphicsQueue, &presentInfo)) catch |err| switch (err) {
         VulkanError.Suboptimal => {}, // hmmst
+        VulkanError.OutOfDate => {
+            try base.resize();
+        },
         else => err,
     };
 }
@@ -296,7 +299,7 @@ fn matmul(matrix: mat4, v: vec) vec {
 }
 
 const turnSpeed = 0.1;
-const transformSpeed = 0.1;
+const transformSpeed = 0.3;
 fn update(delta: f32) !void {
     var size = base.getWindowSize();
     if (lookMode) {
@@ -383,10 +386,10 @@ fn createRenderTexture() !void {
 }
 
 fn createModel() !void {
-    const valuesWidth = 32;
-
-    var data = try model.load(allocator, valuesWidth);
-    defer data.deinit(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    var data = try model.load(&arena.allocator, "bunny.ply");
+    // defer data.deinit(allocator);
+    defer arena.deinit();
 
     // Create the base.GetDevice() side image.
     var imageCreateInfo = vez.ImageCreateInfo{
@@ -402,7 +405,7 @@ fn createModel() !void {
     try convert(vez.vezImageSubData(base.getDevice(), values.texture, &subDataInfo, data.values.ptr));
 
     bufferSize = @intCast(i32, data.tree.len);
-    try octData.init(base.getDevice(), vk.BUFFER_USAGE_STORAGE_BUFFER_BIT, data.tree.len * @sizeOf(i32) * 2);
+    try octData.init(base.getDevice(), vk.BUFFER_USAGE_STORAGE_BUFFER_BIT, data.tree.len * @sizeOf([2]i32));
     try octData.load([2]i32, data.tree);
 }
 

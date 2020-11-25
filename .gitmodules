@@ -1,3 +1,6 @@
 [submodule "zalgebra"]
 	path = zalgebra
 	url = https://github.com/kooparse/zalgebra.git
+[submodule "V-EZ"]
+	path = V-EZ
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/V-EZ.git
