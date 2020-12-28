@@ -2,6 +2,7 @@ const std = @import("std");
 const math = std.math;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
+const stdout = std.io.getStdOut().outStream();
 
 const mat = @import("zalgebra");
 const mat4 = mat.mat4;
@@ -13,16 +14,21 @@ const load_ply = @import("load_ply.zig");
 const load_adf = @import("load_adf.zig");
 const Vertex = load_ply.Vertex;
 
-const texwidth = 2048;
+// TODO: handle restrictive maxImageDimension2D
+const texwidth = 16384;
+const valwidth = texwidth * 2;
 
 pub const valpernode = 2;
 pub const subdiv = 2;
 
-const max_depth = 6;
+const debug_construction = true;
+pub var max_depth: u32 = 10;
 const padding = 0.2;
 
+pub const ChildRefs = [8]i32;
+
 pub const SerialModel = struct {
-    tree: [][2]i32,
+    tree: []ChildRefs,
     values: []u8,
     width: u32,
     height: u32,
@@ -33,62 +39,38 @@ pub const SerialModel = struct {
     }
 };
 
+const Ref = union(enum) {
+    full_node: usize,
+    leaf_node: usize,
+    no_child: void,
+};
+
 pub const OctNode = struct {
-    parent: i32 = -1,
-    children: i32 = -1,
+    children: [8]Ref = [1]Ref{.no_child} ** 8,
     values: [8]u8 = [_]u8{0} ** 8,
 };
 
-var model: ArrayList(OctNode) = undefined;
-
 pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
+    var start = std.time.milliTimestamp();
     if (std.mem.endsWith(u8, path, ".adf")) {
-        return try load_adf.load(allocator, path);
+        const adf = try load_adf.load(allocator, path);
+        try stdout.print("Loaded {} in {} ms\n", .{ path, std.time.milliTimestamp() - start });
+        return adf;
     }
-
-    var verts: []Vertex = undefined;
-    if (std.mem.endsWith(u8, path, ".ply")) {
-        verts = try load_ply.load(allocator, path);
-        errdefer allocator.free(verts);
-    } else {
-        return error.FormatNotSupported;
-    }
-    defer allocator.free(verts);
-
-    var tree = try sdfGen(allocator, verts);
-    defer allocator.free(tree);
-
-    const height = roundUp(@intCast(u32, tree.len), texwidth / 4) * 2;
-
-    const pixelData = try allocator.alloc(u8, texwidth * height);
-    errdefer allocator.free(pixelData);
-    var octree = try allocator.alloc([2]i32, tree.len);
-
-    for (tree) |node, i| {
-        octree[i] = .{ node.parent, node.children };
-
-        const val = node.values;
-        const texbase = 2 * texwidth * (4 * i / texwidth) + 4 * i % texwidth;
-
-        var x: usize = 0;
-        while (x < valpernode) : (x += 1) {
-            var y: usize = 0;
-            while (y < valpernode) : (y += 1) {
-                var z: usize = 0;
-                while (z < valpernode) : (z += 1) {
-                    const vali = x + y * valpernode + z * valpernode * valpernode;
-                    const texi = texbase + x + z * valpernode + y * texwidth;
-                    pixelData[texi] = val[vali];
-                }
-            }
+    var m = gen: {
+        var verts: []Vertex = undefined;
+        if (std.mem.endsWith(u8, path, ".ply")) {
+            verts = try load_ply.load(allocator, path);
+            try stdout.print("Loaded {} in {} ms\n", .{ path, std.time.milliTimestamp() - start });
+        } else {
+            return error.FormatNotSupported;
         }
-    }
+        defer allocator.free(verts);
 
-    const m = SerialModel{
-        .tree = octree,
-        .values = pixelData,
-        .width = texwidth,
-        .height = height,
+        start = std.time.milliTimestamp();
+        var mdl = try sdfGen(allocator, verts);
+        try stdout.print("Genarated adf in {} ms\n", .{std.time.milliTimestamp() - start});
+        break :gen mdl;
     };
 
     const saveto = try std.mem.join(allocator, ".", &[_][]const u8{ path[0..(path.len - 4)], "adf" });
@@ -100,18 +82,79 @@ pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
 
 // fn serialize(tree: []const OctNode, current: usize, nodes: [][2]i32, values: []u8, val_width: usize) void {}
 
-pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) ![]OctNode { // (Vertex *raw_vertices, int32_t vertexcount, int32_t depth)
+var model: ArrayList(OctNode) = undefined;
+var leaves: ArrayList([8]u8) = undefined;
+
+pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vertex *raw_vertices, int32_t vertexcount, int32_t depth)
+    @setRuntimeSafety(debug_construction);
     normalize(vertices);
-    model = try ArrayList(OctNode).initCapacity(allocator, try math.powi(usize, 4, max_depth));
+    model = ArrayList(OctNode).init(allocator);
     defer model.deinit();
+    leaves = ArrayList([8]u8).init(allocator);
+    defer leaves.deinit();
+    {
+        possibleBuffer = try allocator.alloc(Vertex, vertices.len * 12);
+        defer allocator.free(possibleBuffer);
 
-    try model.append(OctNode{});
-    possibleBuffer = try allocator.alloc(Vertex, vertices.len * 12);
-    defer allocator.free(possibleBuffer);
+        _ = try construct(vertices, 0, vec.zero(), 2);
+    }
+    const values_count = model.items.len + leaves.items.len;
+    const height = roundUp(@intCast(u32, values_count), texwidth / 2) * 2;
 
-    try construct(vertices, 0, vec.zero(), 0);
+    const pixelData = try allocator.alloc(u8, texwidth * 2 * height);
+    errdefer allocator.free(pixelData);
+    var octree = try allocator.alloc(ChildRefs, model.items.len);
 
-    return model.toOwnedSlice();
+    for (model.items) |node, i| {
+        for (octree[i]) |*treenode, j| {
+            treenode.* = switch (node.children[j]) {
+                .full_node => |index| @intCast(i32, index),
+                .leaf_node => |index| @intCast(i32, model.items.len + index),
+                .no_child => -1,
+            };
+        }
+
+        const val = node.values;
+        const texbase = 2 * valwidth * (4 * i / valwidth) + 4 * i % valwidth;
+
+        var x: usize = 0;
+        while (x < valpernode) : (x += 1) {
+            var y: usize = 0;
+            while (y < valpernode) : (y += 1) {
+                var z: usize = 0;
+                while (z < valpernode) : (z += 1) {
+                    const vali = x + y * valpernode + z * valpernode * valpernode;
+                    const texi = texbase + z + x * valpernode + y * valwidth;
+                    pixelData[texi] = val[vali];
+                }
+            }
+        }
+    }
+
+    for (leaves.items) |val, leafi| {
+        const i = leafi + model.items.len;
+        const texbase = 2 * valwidth * (4 * i / valwidth) + 4 * i % valwidth;
+
+        var x: usize = 0;
+        while (x < valpernode) : (x += 1) {
+            var y: usize = 0;
+            while (y < valpernode) : (y += 1) {
+                var z: usize = 0;
+                while (z < valpernode) : (z += 1) {
+                    const vali = x + y * valpernode + z * valpernode * valpernode;
+                    const texi = texbase + z + x * valpernode + y * valwidth;
+                    pixelData[texi] = val[vali];
+                }
+            }
+        }
+    }
+
+    return SerialModel{
+        .tree = octree,
+        .values = pixelData,
+        .width = texwidth,
+        .height = height,
+    };
 }
 
 fn split(i: usize) vec {
@@ -124,7 +167,9 @@ fn split(i: usize) vec {
 fn normalize(vertices: []Vertex) void {
     for (vertices) |*vert| {
         vert.Position.y *= -1;
+        vert.Position.z *= -1;
         vert.Normal.y *= -1;
+        vert.Normal.z *= -1;
     }
     var lower = vec.one().scale(math.inf(f32));
     var higher = vec.one().scale(-math.inf(f32));
@@ -145,41 +190,49 @@ fn normalize(vertices: []Vertex) void {
 }
 
 const half_sqrt3 = @sqrt(3.0) / 2.0;
-fn construct(vertices: []Vertex, depth: i32, pos: vec, insert: usize) Allocator.Error!void {
-    @setRuntimeSafety(false);
-    const current = &model.items[insert];
+fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Allocator.Error!Ref {
+    @setRuntimeSafety(debug_construction);
     const scale = math.pow(f32, 0.5, @intToFloat(f32, depth));
-    var center = pos.add(vec.one().scale(0.5 * scale));
+    const center = pos.add(vec.one().scale(0.5 * scale));
 
-    var center_value = trueDistanceAt(center, vertices);
     const start = possibleCount;
     var possible = try getPossible(center, center_value + half_sqrt3 * scale, vertices);
-    // defer possibleCount = start;
+    defer possibleCount = start;
 
     var values: [8]f32 = undefined;
-    var i: usize = 0;
-    while (i < 8) : (i += 1) {
-        values[i] = distanceAt(pos.add(split(i).scale(scale)), possible);
+    for (values) |*val, i| {
+        val.* = distanceAt(pos.add(split(i).scale(scale)), possible);
     }
-    current.values = discretize(values, scale);
+    var current = OctNode{ .values = discretize(values, scale) };
+    var this: Ref = .no_child;
 
-    if (depth >= max_depth) { // or center_value > scale * 2) { // don't split
-        return;
+    if (depth < max_depth) {
+
+        // var do_subdivide = [1]bool{false} ** 8;
+        var i: usize = 0;
+        const subscale = scale * 0.5;
+        while (i < 8) : (i += 1) {
+            // TODO: move fixed point to remove redundancy
+            const subpos = pos.add(split(i).scale(subscale));
+            const subcenter = subpos.add(vec.one().scale(0.5 * subscale));
+            const subcenter_value = trueDistanceAt(subcenter, vertices);
+
+            if (subcenter_value - 0.5 * math.pow(f32, subcenter_value, 1.5) < subscale) {
+                if (this == .no_child) {
+                    this = .{ .full_node = model.items.len };
+                    try model.append(current);
+                }
+                const child_p = try construct(possible, depth + 1, subpos, subcenter_value);
+                model.items[this.full_node].children[i] = child_p;
+            }
+        }
     }
 
-    const childrenIndex = model.items.len;
-    current.children = @intCast(i32, childrenIndex);
-
-    i = 0;
-    while (i < 8) : (i += 1) {
-        try model.append(.{ .parent = @intCast(i32, insert) });
+    if (this == .no_child) {
+        this = .{ .leaf_node = leaves.items.len };
+        try leaves.append(current.values);
     }
-
-    i = 0;
-    while (i < 8) : (i += 1) {
-        try construct(possible, depth + 1, pos.add(split(i).scale(scale / 2)), childrenIndex + i);
-    }
-    possibleCount = start;
+    return this;
 }
 
 const from: f32 = -1;
@@ -197,6 +250,7 @@ var possibleBuffer: []Vertex = undefined;
 var possibleCount: usize = 0;
 
 fn getPossible(p: vec, minDistance: f32, possible: []Vertex) ![]Vertex {
+    @setRuntimeSafety(debug_construction);
     const start = possibleCount;
     var minSquared = minDistance; // * global_scale;
     minSquared *= minSquared;
@@ -212,6 +266,7 @@ fn getPossible(p: vec, minDistance: f32, possible: []Vertex) ![]Vertex {
 }
 
 fn trueDistanceAt(p: vec, vertices: []Vertex) f32 {
+    @setRuntimeSafety(debug_construction);
     var minDistance = math.inf(f32);
 
     for (vertices) |v| {
@@ -222,11 +277,12 @@ fn trueDistanceAt(p: vec, vertices: []Vertex) f32 {
     }
 
     if (math.isInf(minDistance) or math.isNan(minDistance))
-        unreachable;
+        @panic("Invalid vertices");
 
     return @sqrt(minDistance);
 }
 fn distanceAt(p: vec, vertices: []Vertex) f32 {
+    @setRuntimeSafety(debug_construction);
     var closest: Vertex = undefined;
     var minDistance = math.inf(f32);
 
@@ -239,7 +295,7 @@ fn distanceAt(p: vec, vertices: []Vertex) f32 {
     }
 
     if (math.isInf(minDistance) or math.isNan(minDistance))
-        unreachable;
+        @panic("Invalid vertices");
 
     minDistance = @sqrt(minDistance);
     if (minDistance < 0.02) {

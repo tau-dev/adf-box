@@ -17,7 +17,7 @@
 			"variants": [
 				{
 					"name": "Zig Run",
-					"cmd": ["zig", "build", "run" ],
+					"cmd": ["./zig-cache/bin/adf-box", "bunny.ply", "9" ],
 
 				}
 			]

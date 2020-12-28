@@ -18,7 +18,7 @@ pub const PipelineShaderInfo = struct {
 
 const WIDTH = 600;
 const HEIGHT = 400;
-const NAME = "Test the West!";
+const NAME = "adf-box";
 
 pub var manageFramebuffer = true;
 pub var enableValidationLayers = true;
@@ -79,6 +79,12 @@ pub fn getWindowSize() [2]u32 {
     c.glfwGetWindowSize(window, &windowWidth, &windowHeight);
     return .{ @intCast(u32, windowWidth), @intCast(u32, windowHeight) };
 }
+pub fn hasWindowResized() bool {
+    var new_width: i32 = 0;
+    var new_height: i32 = 0;
+    c.glfwGetWindowSize(window, &new_width, &new_height);
+    return new_width != windowWidth or new_height != windowHeight;
+}
 pub fn getCursorPos() [2]i32 {
     var x: f64 = 0;
     var y: f64 = 0;
@@ -91,6 +97,17 @@ pub fn getKey(key: c_int) bool {
 pub fn roundUp(a: u32, b: u32) u32 {
     return (a + b - 1) / b;
 }
+pub fn toggleFullscreen() void {
+    if (c.glfwGetWindowMonitor(window)) |_| {
+        // TODO: handle glfw errors
+        _ = c.glfwSetWindowMonitor(window, null, 0, 0, WIDTH, HEIGHT, c.DONT_CARE);
+    } else {
+        const m = c.glfwGetPrimaryMonitor();
+        const vidmode: *const c.Vidmode = c.glfwGetVideoMode(m);
+        _ = c.glfwSetWindowMonitor(window, m, 0, 0, vidmode.width, vidmode.height, c.DONT_CARE);
+    }
+}
+
 var framebuffer = FrameBuffer{};
 const FrameBuffer = struct {
     colorImage: vk.Image = null,
@@ -427,27 +444,26 @@ fn setWindowCenter(wndw: *c.Window) !void {
     var owner_width: i32 = undefined;
     var owner_height: i32 = undefined;
 
-    var i: usize = 0;
-    while (i < count) : (i += 1) {
+    for (monitors) |monitor| {
         // Get the monitor position
         var monitor_x: i32 = undefined;
         var monitor_y: i32 = undefined;
-        if (monitors[i] == null) {
+        if (monitor == null) {
             @panic("ono");
         }
-        c.glfwGetMonitorPos(monitors[i], &monitor_x, &monitor_y);
+        c.glfwGetMonitorPos(monitor, &monitor_x, &monitor_y);
 
         // Get the monitor size from its video mode
         var monitor_width: i32 = undefined;
         var monitor_height: i32 = undefined;
-        var monitor_vidmode: *const c.Vidmode = c.glfwGetVideoMode(monitors[i]) orelse continue;
+        var monitor_vidmode: *const c.Vidmode = c.glfwGetVideoMode(monitor) orelse continue;
 
         monitor_width = monitor_vidmode.width;
         monitor_height = monitor_vidmode.height;
 
         // Set the owner to this monitor if the center of the window is within its bounding box
         if ((posX > monitor_x and posX < (monitor_x + monitor_width)) and (posY > monitor_y and posY < (monitor_y + monitor_height))) {
-            owner = monitors[i];
+            owner = monitor;
             owner_x = monitor_x;
             owner_y = monitor_y;
             owner_width = monitor_width;
@@ -457,7 +473,7 @@ fn setWindowCenter(wndw: *c.Window) !void {
 
     // Set the window position to the center of the owner monitor
     if (owner) |own| {
-        c.glfwSetWindowPos(wndw, owner_x + (owner_width >> 1) - halfwidth, owner_y + (owner_height >> 1) - halfheight);
+        c.glfwSetWindowPos(wndw, owner_x + @divTrunc(owner_width, 2) - halfwidth, owner_y + @divTrunc(owner_height, 2) - halfheight);
     }
 }
 
@@ -531,10 +547,10 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         }
     }
     physicalDevice = physicalDevices[0];
-
-    // Initialize a window using GLFW and hint no graphics API should be used on the backend.
+    
     c.glfwWindowHint(c.CLIENT_API, c.NO_API);
     window = c.glfwCreateWindow(WIDTH, HEIGHT, NAME, null, null) orelse return error.FailedToCreateWindow;
+    c.glfwHideWindow(window);
     try setWindowCenter(window);
 
     // Create the Vulkan device handle.
@@ -548,6 +564,7 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     try convert(vez.createDevice(physicalDevice, &deviceCreateInfo, &device));
 
     // Set callbacks.
+    // TODO: handle glfw errors
     _ = c.glfwSetWindowSizeCallback(window, windowSizeCallback);
     _ = c.glfwSetCursorPosCallback(window, cursorPosCallback);
     _ = c.glfwSetMouseButtonCallback(window, mouseButtonCallback);
@@ -555,7 +572,8 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     _ = c.glfwSetKeyCallback(window, keyCallback);
 
     // Create a surface from the GLFW window handle.
-    try convert(c.glfwCreateWindowSurface(instance, window, null, &surface));
+    // TODO: handle glfw errors
+    _ = c.glfwCreateWindowSurface(instance, window, null, &surface);
     c.glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     // Create the swapchain.

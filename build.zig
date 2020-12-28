@@ -12,7 +12,7 @@ pub fn build(b: *Builder) void {
 
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    const mode = .Debug; //b.standardReleaseOptions();
+    const mode = .ReleaseFast; //b.standardReleaseOptions();
 
     const exe = b.addExecutable("adf-box", "src/main.zig");
     exe.setTarget(target);

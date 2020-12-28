@@ -35,8 +35,8 @@ const UniformBuffer = struct {
     position: mat.vec4,
     buffer_size: i32,
     fov: f32,
-    margin: f32 = 0.001,
-    limit: f32 = 10,
+    margin: f32 = 0.0001,
+    limit: f32 = 3,
     screeen_size: mat.vec2,
 };
 
@@ -151,9 +151,10 @@ var customCallback: vk.DebugUtilsMessengerEXT = null;
 
 var lastPos = [2]i32{ 0, 0 };
 var view = mat.vec2{ .x = 0, .y = 0 };
-var position = vec.new(0.5, 0.5, -0.5);
+var position = vec.new(0.5, 0.5, 0);
 var lookMode = false;
 var bufferSize: i32 = 0;
+var filename: []const u8 = "";
 
 export fn debugCallback(
     severity: vk.DebugUtilsMessageSeverityFlagBitsEXT,
@@ -179,6 +180,30 @@ fn findMemoryType(physicalDevice: vk.PhysicalDevice, typeFilter: u32, properties
 }
 
 pub fn main() anyerror!void {
+    var args = std.process.ArgIterator.init();
+
+    var programName = if (args.next(allocator)) |program|
+        program
+    else {
+        try stdout.print("Who am I?", .{});
+        return;
+    };
+
+    if (args.next(allocator)) |file| {
+        filename = try file;
+    } else {
+        try stdout.print("usage: ${} <filename> [depth]", .{programName});
+        return;
+    }
+    if (args.next(allocator)) |d| {
+        const depth = try d;
+        defer allocator.free(depth);
+        model.max_depth = std.fmt.parseInt(u32, depth, 10) catch |err| {
+            try stdout.print("usage: ${} <filename> [depth]", .{programName});
+            return;
+        };
+    }
+
     try base.run(allocator, .{
         .name = "V-EZ-Test",
         .initialize = initialize,
@@ -251,6 +276,9 @@ fn draw() !void {
 
     // Present the swapchain framebuffer to the window.
     const waitDstStageMask = @intCast(u32, vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT); //VkPipelineStageFlags
+    if (base.hasWindowResized()) {
+        try base.resize();
+    }
     const swapchain = base.getSwapchain();
     const srcImage = base.getColorAttachment();
 
@@ -267,7 +295,7 @@ fn draw() !void {
         .pImages = &srcImage,
     };
     try convert(vez.queuePresent(graphicsQueue, &presentInfo)) catch |err| switch (err) {
-        VulkanError.Suboptimal => {}, // hmmst
+        VulkanError.Suboptimal, // hmmst
         VulkanError.OutOfDate => {
             try base.resize();
         },
@@ -281,8 +309,12 @@ fn onResize(width: u32, height: u32) !void {
     vez.freeCommandBuffers(base.getDevice(), 1, &commandBuffer);
     try createCommandBuffer();
 }
+fn onKey(key: i32, down: bool) anyerror!void {
+    if (key == c.KEY_ESCAPE and down) {
+        base.toggleFullscreen();
+    }
+}
 fn onMousePos(x: i32, y: i32) anyerror!void {}
-fn onKey(button: i32, down: bool) anyerror!void {}
 fn onMouseButton(button: i32, down: bool, x: i32, y: i32) anyerror!void {
     if (down) {
         lookMode = !lookMode;
@@ -387,13 +419,13 @@ fn createRenderTexture() !void {
 
 fn createModel() !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
-    var data = try model.load(&arena.allocator, "bunny.ply");
+    var data = try model.load(&arena.allocator, filename);
     // defer data.deinit(allocator);
     defer arena.deinit();
 
     // Create the base.GetDevice() side image.
     var imageCreateInfo = vez.ImageCreateInfo{
-        .format = .FORMAT_R8_UNORM,
+        .format = .FORMAT_R8G8_UNORM,
         .extent = .{ .width = data.width, .height = data.height, .depth = 1 },
         .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
     };
@@ -404,9 +436,9 @@ fn createModel() !void {
     };
     try convert(vez.vezImageSubData(base.getDevice(), values.texture, &subDataInfo, data.values.ptr));
 
+    try octData.init(base.getDevice(), vk.BUFFER_USAGE_STORAGE_BUFFER_BIT, data.tree.len * @sizeOf(model.ChildRefs));
     bufferSize = @intCast(i32, data.tree.len);
-    try octData.init(base.getDevice(), vk.BUFFER_USAGE_STORAGE_BUFFER_BIT, data.tree.len * @sizeOf([2]i32));
-    try octData.load([2]i32, data.tree);
+    try octData.load(model.ChildRefs, data.tree);
 }
 
 fn createUniformBuffer() VulkanError!void {
@@ -459,14 +491,8 @@ fn createCommandBuffer() !void {
 
     // Define clear values for the swapchain's color and depth attachments.
     var attachmentReferences = [2]vez.AttachmentReference{
-        .{
-            .clearValue = .{ .color = .{ .float32 = .{ 0.3, 0.3, 0.3, 0.0 } } },
-            .loadOp = .ATTACHMENT_LOAD_OP_CLEAR, // default?
-        },
-        .{
-            .clearValue = .{ .depthStencil = .{ .depth = 1.0, .stencil = 0 } },
-            .loadOp = .ATTACHMENT_LOAD_OP_CLEAR, // default?
-        },
+        .{ .clearValue = .{ .color = .{ .float32 = .{ 0.3, 0.3, 0.3, 0.0 } } } },
+        .{ .clearValue = .{ .depthStencil = .{ .depth = 1.0, .stencil = 0 } } },
     };
 
     const beginInfo = vez.RenderPassBeginInfo{
@@ -476,7 +502,6 @@ fn createCommandBuffer() !void {
     };
     vez.cmdBeginRenderPass(&beginInfo);
 
-    // Bind the pipeline and associated resources.
     vez.cmdBindPipeline(drawPipeline.pipeline);
     vez.cmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
     renderTexture.cmdBind(0, 1);
@@ -511,7 +536,6 @@ fn createCommandBuffer() !void {
 
     // Draw the quad.
     vez.cmdDrawIndexed(6, 1, 0, 0, 0);
-
     vez.cmdEndRenderPass();
 
     try convert(vez.endCommandBuffer());

@@ -373,7 +373,7 @@ pub const struct_ColorBlendState = extern struct {
 };
 pub const ColorBlendState = struct_ColorBlendState;
 pub const struct_AttachmentInfo = extern struct {
-    loadOp: vk.AttachmentLoadOp,
+    loadOp: vk.AttachmentLoadOp = .ATTACHMENT_LOAD_OP_CLEAR,
     storeOp: vk.AttachmentStoreOp = .ATTACHMENT_STORE_OP_STORE,
     clearValue: vk.ClearValue,
 };

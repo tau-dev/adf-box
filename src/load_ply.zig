@@ -10,7 +10,7 @@ const mat4 = mat.mat4;
 const vec = mat.vec3;
 
 const ParseError = error{
-    InvalidFormat,
+    FormatInvalid,
     FormatNotSupported,
 } || Reader.Error || Allocator.Error;
 
@@ -36,14 +36,14 @@ const Element = struct {
     count: usize,
     properties: ArrayList(Property),
 
-    pub fn parseDefinition(allocator: *Allocator, reader: *Reader) !@This() {
+    fn parseDefinition(allocator: *Allocator, reader: *Reader) !@This() {
         var name = try readWord(allocator, reader);
         errdefer allocator.free(name);
 
         var count_str = try readWord(allocator, reader);
         defer allocator.free(count_str);
 
-        var count = std.fmt.parseUnsigned(usize, count_str, 10) catch |err| return error.InvalidFormat;
+        var count = std.fmt.parseUnsigned(usize, count_str, 10) catch |err| return error.FormatInvalid;
         var properties = ArrayList(Property).init(allocator);
 
         return @This(){
@@ -53,15 +53,15 @@ const Element = struct {
         };
     }
 
-    pub fn deinit(allocator: *Allocator) void {
+    fn deinit(allocator: *Allocator) void {
         allocator.free(name);
         properties.deinit();
     }
 
-    pub const Value = struct {
+    const Value = struct {
         properties: []Property.Value,
 
-        pub fn deinit(self: @This(), allocator: *Allocator) void {
+        fn deinit(self: @This(), allocator: *Allocator) void {
             for (self.properties) |prop| {
                 prop.deinit(allocator);
             }
@@ -70,7 +70,7 @@ const Element = struct {
         }
     };
 
-    pub fn read(self: @This(), allocator: *Allocator, reader: *Reader) !Value {
+    fn read(self: @This(), allocator: *Allocator, reader: *Reader) !Value {
         var res = try allocator.alloc(Property.Value, self.properties.items.len);
         errdefer allocator.free(res);
 
@@ -81,7 +81,7 @@ const Element = struct {
 
         return @This().Value{ .properties = res };
     }
-    pub fn ignore(self: @This(), reader: *Reader) !void {
+    fn ignore(self: @This(), reader: *Reader) !void {
         for (self.properties.items) |p, i| {
             try p.ignore(reader);
         }
@@ -101,7 +101,7 @@ const Property = union(enum) {
         Float,
         Double,
 
-        pub fn parse(name: []const u8) ?@This() {
+        fn parse(name: []const u8) ?@This() {
             if (eql(name, "char")) {
                 return .Char;
             } else if (eql(name, "uchar")) {
@@ -123,7 +123,7 @@ const Property = union(enum) {
             }
         }
 
-        pub fn read(self: @This(), reader: *Reader) !Value {
+        fn read(self: @This(), reader: *Reader) !Value {
             return switch (self) {
                 .Char => .{ .Char = try readVal(reader, i8) },
                 .Uchar => .{ .Uchar = try readVal(reader, u8) },
@@ -135,7 +135,7 @@ const Property = union(enum) {
                 .Double => .{ .Double = try readVal(reader, f64) },
             };
         }
-        pub fn size(self: @This()) usize {
+        fn size(self: @This()) usize {
             return switch (self) {
                 .Char, .Uchar => 1,
                 .Short, .Ushort => 2,
@@ -166,11 +166,11 @@ const Property = union(enum) {
             } else if (eql(count, "uint")) {
                 self.count = .Uint;
             } else {
-                return error.InvalidFormat;
+                return error.FormatInvalid;
             }
             var content = try readWord(allocator, reader);
             defer allocator.free(content);
-            self.content = Type.parse(content) orelse return error.InvalidFormat;
+            self.content = Type.parse(content) orelse return error.FormatInvalid;
 
             var name = try readWord(allocator, reader);
             defer allocator.free(name);
@@ -210,7 +210,7 @@ const Property = union(enum) {
     basic: Type,
     list: List,
 
-    pub fn parseDefinition(allocator: *Allocator, reader: *Reader) !Self {
+    fn parseDefinition(allocator: *Allocator, reader: *Reader) !Self {
         var kind = try readWord(allocator, reader);
 
         var self: Self = undefined;
@@ -223,11 +223,11 @@ const Property = union(enum) {
         } else if (eql(kind, "list")) {
             return Self{ .list = try List.parseDefinition(allocator, reader) };
         } else {
-            return error.InvalidFormat;
+            return error.FormatInvalid;
         }
     }
 
-    pub fn read(self: @This(), allocator: *Allocator, reader: *Reader) (errors(Type.read) || errors(List.read))!Value { //@typeInfo(@typeInfo(@TypeOf(Type.read)).Fn.return_type.?).ErrorUnion.error_set
+    fn read(self: @This(), allocator: *Allocator, reader: *Reader) (errors(Type.read) || errors(List.read))!Value { //@typeInfo(@typeInfo(@TypeOf(Type.read)).Fn.return_type.?).ErrorUnion.error_set
         return switch (self) {
             .basic => |t| t.read(reader),
             .list => |l| l.read(allocator, reader),
@@ -247,7 +247,7 @@ const Property = union(enum) {
         }
     }
 
-    pub const Value = union(enum) {
+    const Value = union(enum) {
         Char: i8,
         Uchar: u8,
         Short: i16,
@@ -265,7 +265,7 @@ const Property = union(enum) {
         FloatList: []f32,
         DoubleList: []f64,
 
-        pub fn deinit(self: @This(), allocator: *Allocator) void {
+        fn deinit(self: @This(), allocator: *Allocator) void {
             switch (self) {
                 .CharList => |val| allocator.free(val),
                 .UcharList => |val| allocator.free(val),
@@ -286,11 +286,12 @@ fn readVal(read: *Reader, comptime T: type) ParseError!T {
         .Ascii => readAscii(read, T),
         .BinaryBigEndian, .BinaryLittleEndian => switch (T) {
             u8, i8, u16, i16, u32, i32 => read.readInt(T, if (format == .BinaryLittleEndian) builtin.Endian.Little else builtin.Endian.Big) catch |err| switch (err) {
-                error.EndOfStream => error.InvalidFormat,
+                error.EndOfStream => error.FormatInvalid,
                 else => |e| e,
             },
             // TODO
-            f32, f64 => 0,
+            f32 => @bitCast(f32, try readVal(read, u32)),
+            f64 => @bitCast(f64, try readVal(read, u64)),
             else => @compileError("type not supported"),
         },
     };
@@ -303,13 +304,13 @@ fn readAscii(read: *Reader, comptime T: type) !T {
 
     while (true) {
         if (count >= buf.len) {
-            return error.InvalidFormat;
+            return error.FormatInvalid;
         }
         const r = read.readByte() catch |err| switch (err) {
             error.EndOfStream => if (count > 0) {
                 break;
             } else {
-                return error.InvalidFormat;
+                return error.FormatInvalid;
             },
             else => |e| return e,
         };
@@ -323,9 +324,9 @@ fn readAscii(read: *Reader, comptime T: type) !T {
     }
 
     return switch (T) {
-        u8, i8, u16, i16, u32, i32 => std.fmt.parseInt(T, buf[0..count], 10) catch |err| return error.InvalidFormat,
+        u8, i8, u16, i16, u32, i32 => std.fmt.parseInt(T, buf[0..count], 10) catch |err| return error.FormatInvalid,
         f32, f64 => std.fmt.parseFloat(T, buf[0..count]) catch |err| {
-            return error.InvalidFormat;
+            return error.FormatInvalid;
         },
         else => @compileError("type not supported"),
     };
@@ -342,7 +343,7 @@ pub fn load(allocator: *Allocator, path: []const u8) ![]Vertex {
     var reader = file.reader();
 
     if (!expect(&reader, "ply\nformat ")) {
-        return error.InvalidFormat;
+        return error.FormatInvalid;
     }
 
     var formatString = try readWord(allocator, &reader);
@@ -421,7 +422,7 @@ fn readWord(allocator: *Allocator, read: *Reader) ![]u8 {
             error.EndOfStream => if (l.items.len > 0) {
                 break;
             } else {
-                return error.InvalidFormat;
+                return error.FormatInvalid;
             },
             else => return err,
         };
@@ -443,7 +444,7 @@ fn readHeader(allocator: *Allocator, read: *Reader) ![]Element {
 
     while (true) {
         var word = readWord(allocator, read) catch |err| switch (err) {
-            error.EndOfStream => return error.InvalidFormat,
+            error.EndOfStream => return error.FormatInvalid,
             else => |e| return e,
         };
 
@@ -454,7 +455,7 @@ fn readHeader(allocator: *Allocator, read: *Reader) ![]Element {
         } else if (eql(word, "comment")) {
             while (true) {
                 var b = read.readByte() catch |err| switch (err) {
-                    error.EndOfStream => return error.InvalidFormat,
+                    error.EndOfStream => return error.FormatInvalid,
                     else => |e| return e,
                 };
                 if (b == '\n') {
@@ -468,7 +469,7 @@ fn readHeader(allocator: *Allocator, read: *Reader) ![]Element {
 
             try last_properties.append(try Property.parseDefinition(allocator, read));
         } else {
-            return error.InvalidFormat;
+            return error.FormatInvalid;
         }
     }
 }

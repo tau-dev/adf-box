@@ -3,7 +3,7 @@
 #define groupSize 8
 #define subdiv 2
 #define vpercell 2
-#define textureWidth 2048
+#define textureWidth 16384
 
 layout (local_size_x = groupSize, local_size_y = groupSize, local_size_z = 1 ) in;
 
@@ -19,7 +19,7 @@ layout(binding = 0) uniform restrict readonly UniformBufferObject
 };
 
 layout(binding = 1) restrict readonly buffer octDataBuffer {
-	ivec2 octData[]; // x: parent, y: children
+	int octData[];
 };
 layout(binding = 2) uniform sampler2D values;
 layout(binding = 3) uniform restrict writeonly image2D dest;
@@ -30,19 +30,19 @@ vec2 dimensions;
 vec3 lower = vec3(0, 0, 0);
 float scale = 1;
 
-float sam(vec2 p)
+vec2 sam(vec2 p)
 {
-    return texture(values, (p + vec2(.5, .5)) * dimensions).x;
+    return texture(values, (p + vec2(.5, .5)) * dimensions).xy;
 }
 
 float sample_at(vec3 d, float scale)
 {
-    int cellindex = index * vpercell*vpercell;
+    int cellindex = index * vpercell;
     vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * vpercell);
 
-    float loadL = sam(d.xy + p);
-    float loadH = sam(d.xy + p + vec2(vpercell, 0));
-    float result = (mix(loadL, loadH, d.z) - .25) * scale * 4;
+    vec2 load = sam(d.xy + p);
+    // float loadH = sam(d.xy + p + vec2(vpercell, 0));
+    float result = (mix(load.x, load.y, d.z) - .25) * scale * 4;
     return result;
 }
 
@@ -55,21 +55,24 @@ float interpol_world(vec3 pos)
 vec3 gradient(vec3 pos)
 {
     vec3 d = clamp((pos - lower) / scale, 0, 1);
-    vec2 p = ivec2((index * 4) % textureWidth, index * 4 / textureWidth * 2);
+    vec2 p = ivec2((index * 2) % textureWidth, index * 2 / textureWidth * 2);
     vec2 ph = p + vec2(vpercell, 0);
 
     vec2 xzl = (vec2(d.x, 0) + p);
 
-    float xl = mix(sam(vec2(0, d.y) + p), sam(vec2(0, d.y) + ph), d.z);
-    float xh = mix(sam(vec2(1, d.y) + p), sam(vec2(1, d.y) + ph), d.z);
 
-    float yl = mix(sam(vec2(d.x, 0) + p), sam(vec2(d.x, 0) + ph), d.z);
-    float yh = mix(sam(vec2(d.x, 1) + p), sam(vec2(d.x, 1) + ph), d.z);
-    
-    float zl = sam(d.xy + p);
-    float zh = sam(d.xy + ph);
+    vec2 xl = sam(p + vec2(0, d.y));
+    vec2 xh = sam(p + vec2(1, d.y));
+    vec2 dx = mix(vec2(xl.x, xh.x), vec2(xl.y, xh.y), d.z);
 
-    return vec3(xh-xl, yh-yl, zh-zl);
+    vec2 yl = sam(p + vec2(d.x, 0));
+    vec2 yh = sam(p + vec2(d.x, 1));
+    vec2 dy = mix(vec2(yl.x, yh.x), vec2(yl.y, yh.y), d.z);
+
+
+    vec2 dz = sam(p + d.xy);
+
+    return vec3(dx.y - dx.x, dy.y - dy.x, dz.y - dz.x);
 }
 
 void scale_down(ivec3 p)
@@ -82,27 +85,19 @@ void scale_down(ivec3 p)
 
 void find(vec3 pos)
 {
-    int iterations = 0;
     index = 0;
-    ivec2 c = octData[index];
-    /*
-    while (!box.inside(pos) && c.parent >= 0) {
-        index = c.parent;
-        c = data[index];
-        box.scale_up();
-    }*/
-
     lower = vec3(0, 0, 0);
     scale = 1;
 
-    while (index < buffer_size && iterations < 12 && c.y >= 0)
+    while (index < buffer_size)
     {
-        ivec3 dir = min(ivec3(clamp((pos - lower) / scale, 0, 1) * subdiv), ivec3(subdiv - 1, subdiv - 1, subdiv - 1));
-        int p = dir.x + dir.y * subdiv + dir.z * subdiv * subdiv;
-        index = c.y + p;
-        c = octData[index];
+        const ivec3 dir = min(ivec3(clamp((pos - lower) / scale, 0, 1) * subdiv), ivec3(subdiv - 1, subdiv - 1, subdiv - 1));
+        const int p = dir.x + dir.y * subdiv + dir.z * subdiv * subdiv;
+        const int next = octData[index * 8 + p];
+        if (next < 0)
+            return;
+        index = next;
         scale_down(dir);
-        iterations++;
     }
 }
 
@@ -130,7 +125,7 @@ void main()
 	// imageStore(dest, pospx, vec4(interpol_world(pos), 0, 0, 1));
 	// return;
 
-	for (int i = 0; (prox > margin * 2 || prox < 0) && i < 100; i++) {
+	for (int i = 0; (prox > margin * 2 || prox < 0) && i < 200; i++) {
 		if (dot(pos - vec3(0.5), pos - vec3(0.5)) > limit) {
 			imageStore(dest, pospx, vec4(0.005, 0.01, 0.2, 1.0));
 			return;
