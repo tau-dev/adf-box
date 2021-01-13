@@ -76,7 +76,6 @@ const Element = struct {
 
         for (self.properties.items) |p, i| {
             res[i] = try p.read(allocator, reader);
-            // TODO: free on error
         }
 
         return @This().Value{ .properties = res };
@@ -289,7 +288,6 @@ fn readVal(read: *Reader, comptime T: type) ParseError!T {
                 error.EndOfStream => error.FormatInvalid,
                 else => |e| e,
             },
-            // TODO
             f32 => @bitCast(f32, try readVal(read, u32)),
             f64 => @bitCast(f64, try readVal(read, u64)),
             else => @compileError("type not supported"),

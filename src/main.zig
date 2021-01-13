@@ -1,5 +1,4 @@
 const std = @import("std");
-const stdout = std.io.getStdOut().outStream();
 const allocator = std.heap.c_allocator;
 
 const base = @import("base.zig");
@@ -10,6 +9,7 @@ const convert = base.convert;
 const roundUp = base.roundUp;
 const VulkanError = base.VulkanError;
 const getKey = base.getKey;
+
 
 const mat = @import("zalgebra");
 const mat4 = mat.mat4;
@@ -37,7 +37,9 @@ const UniformBuffer = struct {
     fov: f32,
     margin: f32 = 0.0001,
     limit: f32 = 3,
+    light: mat.vec4,
     screeen_size: mat.vec2,
+    intensity: f32 = 0.1,
 };
 
 fn bytewiseCopy(comptime T: type, data: []const T, dest: [*]u8) void {
@@ -151,20 +153,11 @@ var customCallback: vk.DebugUtilsMessengerEXT = null;
 
 var lastPos = [2]i32{ 0, 0 };
 var view = mat.vec2{ .x = 0, .y = 0 };
-var position = vec.new(0.5, 0.5, 0);
+var position = vec.new(0.5, 0.5, -0.5);
+var light = vec.new(-1, -2, -2);
 var lookMode = false;
 var bufferSize: i32 = 0;
 var filename: []const u8 = "";
-
-export fn debugCallback(
-    severity: vk.DebugUtilsMessageSeverityFlagBitsEXT,
-    msgType: vk.DebugUtilsMessageTypeFlagsEXT,
-    data: [*c]const vk.DebugUtilsMessengerCallbackDataEXT,
-    userData: ?*c_void,
-) vk.Bool32 {
-    stdout.print("wowz: {}", .{data.*.pMessage}) catch unreachable;
-    return 0;
-}
 
 fn findMemoryType(physicalDevice: vk.PhysicalDevice, typeFilter: u32, properties: vk.MemoryPropertyFlags) u32 {
     var memProperties: vk.PhysicalDeviceMemoryProperties = undefined;
@@ -179,33 +172,39 @@ fn findMemoryType(physicalDevice: vk.PhysicalDevice, typeFilter: u32, properties
     return 0;
 }
 
+
 pub fn main() anyerror!void {
+    const stdout = std.io.getStdOut().outStream();
+    const usage = "usage: ${} <filename> [depth]";
+
     var args = std.process.ArgIterator.init();
 
     var programName = if (args.next(allocator)) |program|
         program
     else {
-        try stdout.print("Who am I?", .{});
+        try stdout.print(usage, .{"<adf-box>"});
         return;
     };
 
     if (args.next(allocator)) |file| {
         filename = try file;
     } else {
-        try stdout.print("usage: ${} <filename> [depth]", .{programName});
+        try stdout.print(usage, .{programName});
         return;
     }
     if (args.next(allocator)) |d| {
         const depth = try d;
         defer allocator.free(depth);
         model.max_depth = std.fmt.parseInt(u32, depth, 10) catch |err| {
-            try stdout.print("usage: ${} <filename> [depth]", .{programName});
+            try stdout.print(usage, .{programName});
             return;
         };
     }
 
+
     try base.run(allocator, .{
         .name = "V-EZ-Test",
+        .load = load,
         .initialize = initialize,
         .cleanup = cleanup,
         .draw = draw,
@@ -219,20 +218,13 @@ pub fn main() anyerror!void {
     });
 }
 
+fn load() !void {
+    try createModel();
+}
+
 fn initialize() !void {
-    const callbackCreateInfo = vk.DebugUtilsMessengerCreateInfoEXT{
-        .sType = .DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-        .flags = 0,
-        .messageSeverity = vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        .messageType = vk.DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
-        .pfnUserCallback = debugCallback,
-        .pUserData = null,
-    };
-    // TODO: Register the callback (currently throws linker error)
-    // try convert(vk.createDebugUtilsMessengerEXT(base.getInstance(), &callbackCreateInfo, null, &customCallback));
     try createQuad();
     try createRenderTexture();
-    try createModel();
     try createUniformBuffer();
     try createPipeline();
     try createCommandBuffer();
@@ -368,12 +360,33 @@ fn update(delta: f32) !void {
     if (getKey(c.KEY_LEFT_CONTROL) or getKey(c.KEY_KP_3)) {
         movePos(vec.new(0, 1, 0), delta);
     }
+    var c0 = delta * 1; // get it?
+    if (getKey(c.KEY_U)) {
+        light.x += c0;
+    }
+    if (getKey(c.KEY_J)) {
+        light.x -= c0;
+    }
+    if (getKey(c.KEY_K)) {
+        light.y += c0;
+    }
+    if (getKey(c.KEY_I)) {
+        light.y -= c0;
+    }
+    if (getKey(c.KEY_O)) {
+        light.z += c0;
+    }
+    if (getKey(c.KEY_L)) {
+        light.z -= c0;
+    }
 
     var ub = UniformBuffer{
         .view = viewMat,
         .position = mat.vec4.new(position.x, position.y, position.z, 1),
         .buffer_size = bufferSize,
-        .fov = 1,
+        .fov = 0.4,
+        .light = mat.vec4.new(light.x, light.y, light.z, 1),
+        .intensity = 2,
         .screeen_size = mat.vec2.new(@intToFloat(f32, size[0]), @intToFloat(f32, size[1])),
     };
 
@@ -423,7 +436,7 @@ fn createModel() !void {
     // defer data.deinit(allocator);
     defer arena.deinit();
 
-    // Create the base.GetDevice() side image.
+    // Create the device side image.
     var imageCreateInfo = vez.ImageCreateInfo{
         .format = .FORMAT_R8G8_UNORM,
         .extent = .{ .width = data.width, .height = data.height, .depth = 1 },
@@ -506,10 +519,6 @@ fn createCommandBuffer() !void {
     vez.cmdBindBuffer(uniformBuffer, 0, vk.WHOLE_SIZE, 0, 0, 0);
     renderTexture.cmdBind(0, 1);
 
-    // Set push constants.
-    //float blendColor[3] = { 1.0f, 1.0f, 1.0f };
-    //vezCmdPushConstants(0, sizeof(float) * 3, &blendColor[0]);
-
     // Set depth stencil state.
     const depthStencilState = vez.PipelineDepthStencilState{
         .depthBoundsTestEnable = 0,
@@ -530,11 +539,9 @@ fn createCommandBuffer() !void {
     };
     vez.cmdSetDepthStencilState(&depthStencilState);
 
-    // Bind the vertex buffer and index buffers.
     vez.cmdBindVertexBuffers(0, 1, &[_]vk.Buffer{vertexBuffer.handle}, &[_]u64{0});
     vez.cmdBindIndexBuffer(indexBuffer.handle, 0, .INDEX_TYPE_UINT32);
 
-    // Draw the quad.
     vez.cmdDrawIndexed(6, 1, 0, 0, 0);
     vez.cmdEndRenderPass();
 

@@ -2,7 +2,6 @@ const std = @import("std");
 const math = std.math;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
-const stdout = std.io.getStdOut().outStream();
 
 const mat = @import("zalgebra");
 const mat4 = mat.mat4;
@@ -23,7 +22,7 @@ pub const subdiv = 2;
 
 const debug_construction = true;
 pub var max_depth: u32 = 10;
-const padding = 0.2;
+const padding = 0.1;
 
 pub const ChildRefs = [8]i32;
 
@@ -51,6 +50,7 @@ pub const OctNode = struct {
 };
 
 pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
+    const stdout = std.io.getStdOut().outStream();
     var start = std.time.milliTimestamp();
     if (std.mem.endsWith(u8, path, ".adf")) {
         const adf = try load_adf.load(allocator, path);
@@ -189,14 +189,13 @@ fn normalize(vertices: []Vertex) void {
     }
 }
 
-const half_sqrt3 = @sqrt(3.0) / 2.0;
 fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Allocator.Error!Ref {
     @setRuntimeSafety(debug_construction);
     const scale = math.pow(f32, 0.5, @intToFloat(f32, depth));
     const center = pos.add(vec.one().scale(0.5 * scale));
 
     const start = possibleCount;
-    var possible = try getPossible(center, center_value + half_sqrt3 * scale, vertices);
+    var possible = try getPossible(center, center_value + @sqrt(3.0) / 2.0 * scale, vertices);
     defer possibleCount = start;
 
     var values: [8]f32 = undefined;
@@ -217,7 +216,7 @@ fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Alloca
             const subcenter = subpos.add(vec.one().scale(0.5 * subscale));
             const subcenter_value = trueDistanceAt(subcenter, vertices);
 
-            if (subcenter_value - 0.5 * math.pow(f32, subcenter_value, 1.5) < subscale) {
+            if (subcenter_value < subscale * @sqrt(3.0)) {
                 if (this == .no_child) {
                     this = .{ .full_node = model.items.len };
                     try model.append(current);

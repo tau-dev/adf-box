@@ -15,7 +15,9 @@ layout(binding = 0) uniform restrict readonly UniformBufferObject
     float FOV;
     float margin;
     float limit;
+    vec4 light;
 	vec2 screen_size;
+    float intensity;
 };
 
 layout(binding = 1) restrict readonly buffer octDataBuffer {
@@ -41,7 +43,6 @@ float sample_at(vec3 d, float scale)
     vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * vpercell);
 
     vec2 load = sam(d.xy + p);
-    // float loadH = sam(d.xy + p + vec2(vpercell, 0));
     float result = (mix(load.x, load.y, d.z) - .25) * scale * 4;
     return result;
 }
@@ -108,6 +109,10 @@ vec3 ray(ivec2 coord, vec2 destsize)
 	return normalize(dir.xyz);
 }
 
+void shade(ivec2 pospx, float brightness, vec3 normal) {
+    imageStore(dest, pospx, vec4(brightness - normal.y*0.05 + 0.05));
+} 
+
 void main()
 {
 	ivec2 pospx = ivec2(gl_GlobalInvocationID.xy);
@@ -122,18 +127,35 @@ void main()
 	vec3 pos = position.xyz;
 	vec3 dir = ray(pospx, vec2(destsize));
 
-	// imageStore(dest, pospx, vec4(interpol_world(pos), 0, 0, 1));
-	// return;
-
-	for (int i = 0; (prox > margin * 2 || prox < 0) && i < 200; i++) {
+	for (int i = 0; (prox > margin * 2 || prox < 0) && i < 100; i++) {
 		if (dot(pos - vec3(0.5), pos - vec3(0.5)) > limit) {
 			imageStore(dest, pospx, vec4(0.005, 0.01, 0.2, 1.0));
 			return;
 		}
 		find(pos);
         prox = interpol_world(pos);
+        pos += dir * prox;
+    }
+
+    dir = normalize(light.xyz - pos);
+    vec3 normal = normalize(gradient(pos));
+    pos += dir * margin * 10;
+    float angle = dot(dir, normal);
+    if (angle < 0) {
+        shade(pospx, 0.0, normal);
+        return;
+    }
+    float dist = length(light.xyz - pos) / 2;
+
+    for (int i = 0; (prox > -margin) && i < 40; i++) {
+        if (prox > dist || any(lessThan(pos, vec3(0))) || any(greaterThan(pos, vec3(1)))) {
+            float attenuation = angle / (dist*dist) *  (exp2(intensity) - 1);
+            shade(pospx, attenuation, normal);
+            return;
+        }
+        find(pos);
+        prox = interpol_world(pos);
         pos += dir * prox;// * (1 - inf.margin);
     }
-    float angle = abs(dot(dir, normalize(gradient(pos))));
-	imageStore(dest, pospx, vec4(angle, angle, angle, 1.0));
+    shade(pospx, 0.0, normal);
 }

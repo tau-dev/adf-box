@@ -1,14 +1,7 @@
 const std = @import("std");
-pub const vk = @import("vulkan.zig");
-pub const vez = @import("vez.zig");
-pub const c = @import("glfw3.zig");
-// pub const c = @cImport({
-// @cInclude("VEZ.h");
-// @cDefine("GLFW_INCLUDE_VULKAN", "1");
-// @cInclude("GLFW/glfw3.h");
-// });
+usingnamespace @import("utils.zig");
+
 const Allocator = std.mem.Allocator;
-const NameSet = std.AutoHashMap([256]u8, void);
 
 pub const PipelineShaderInfo = struct {
     filename: []const u8,
@@ -34,10 +27,6 @@ fn extendName(comptime name: []const u8) [256]u8 {
     }
     return x;
 }
-
-// const validationName = validation.* ++ [_]u8{0} ** (256 - validation.len);
-
-const stdout = std.io.getStdOut().outStream();
 
 var window: *c.Window = undefined;
 var windowWidth: i32 = 0;
@@ -99,12 +88,11 @@ pub fn roundUp(a: u32, b: u32) u32 {
 }
 pub fn toggleFullscreen() void {
     if (c.glfwGetWindowMonitor(window)) |_| {
-        // TODO: handle glfw errors
-        _ = c.glfwSetWindowMonitor(window, null, 0, 0, WIDTH, HEIGHT, c.DONT_CARE);
+        c.glfwSetWindowMonitor(window, null, 0, 0, WIDTH, HEIGHT, c.DONT_CARE);
     } else {
         const m = c.glfwGetPrimaryMonitor();
         const vidmode: *const c.Vidmode = c.glfwGetVideoMode(m);
-        _ = c.glfwSetWindowMonitor(window, m, 0, 0, vidmode.width, vidmode.height, c.DONT_CARE);
+        c.glfwSetWindowMonitor(window, m, 0, 0, vidmode.width, vidmode.height, c.DONT_CARE);
     }
 }
 
@@ -115,10 +103,9 @@ const FrameBuffer = struct {
     depthStencilImage: vk.Image = null,
     depthStencilImageView: vk.ImageView = null,
     handle: vez.Framebuffer = null,
-
-    /// Free previous allocations.
+    
     fn deinit(self: FrameBuffer, dev: vk.Device) void {
-        if (framebuffer.handle) |hndl| {
+        if (self.handle) |hndl| {
             vez.destroyFramebuffer(dev, self.handle);
             vez.destroyImageView(dev, self.colorImageView);
             vez.destroyImageView(dev, self.depthStencilImageView);
@@ -137,6 +124,7 @@ const Callbacks = struct {
 
 const Application = struct {
     name: []const u8,
+    load: fn () anyerror!void,
     initialize: fn () anyerror!void,
     cleanup: fn () anyerror!void,
     draw: fn () anyerror!void,
@@ -144,126 +132,8 @@ const Application = struct {
     callbacks: Callbacks,
 };
 
-// abstracc
-
-fn makeVkVersion(major: u32, minor: anytype, patch: anytype) u32 {
-    return (major << 22) | ((minor << 12) | patch);
-}
-
-pub const VulkanError = error{
-    Incomplete,
-    NotReady,
-    Timeout,
-    EventSet,
-    EventReset,
-    ThreadIdle,
-    ThreadDone,
-    OperationDeferred,
-    OperationNotDeferred,
-    OutOfHostMemory,
-    OutOfDeviceMemory,
-    InitializationFailed,
-    DeviceLost,
-    MemoryMapFailed,
-    LayerNotPresent,
-    ExtensionNotPresent,
-    FeatureNotPresent,
-    IncompatibleDriver,
-    TooManyObjects,
-    FormatNotSupported,
-    FragmentedPool,
-    UnknownError,
-    OutOfPoolMemory,
-    InvalidExternalHandle,
-    Fragmentation,
-    InvalidAddress,
-    SurfaceLost,
-    NativeWindowInUse,
-    Suboptimal,
-    OutOfDate,
-    IncompatibleDisplay,
-    ValidationFailed,
-    InvalidShader,
-    IncompatibleVersion,
-    InvalidDrmFormatModifierPlaneLayout,
-    NotPermitted,
-    FullScreenExclusiveModeLost,
-    PipelineCompileRequired,
-};
-
-pub fn convert(result: vk.Result) VulkanError!void {
-    return switch (result) {
-        .SUCCESS => return,
-        .SUBOPTIMAL_KHR => VulkanError.Suboptimal,
-        .INCOMPLETE => VulkanError.Incomplete,
-        .NOT_READY => VulkanError.NotReady,
-        .TIMEOUT => VulkanError.Timeout,
-        .EVENT_SET => VulkanError.EventSet,
-        .EVENT_RESET => VulkanError.EventReset,
-        .THREAD_IDLE_KHR => VulkanError.ThreadIdle,
-        .THREAD_DONE_KHR => VulkanError.ThreadDone,
-        .OPERATION_DEFERRED_KHR => VulkanError.OperationDeferred,
-        .OPERATION_NOT_DEFERRED_KHR => VulkanError.OperationNotDeferred,
-        .ERROR_OUT_OF_HOST_MEMORY => VulkanError.OutOfHostMemory,
-        .ERROR_OUT_OF_DEVICE_MEMORY => VulkanError.OutOfDeviceMemory,
-        .ERROR_INITIALIZATION_FAILED => VulkanError.InitializationFailed,
-        .ERROR_DEVICE_LOST => VulkanError.DeviceLost,
-        .ERROR_MEMORY_MAP_FAILED => VulkanError.MemoryMapFailed,
-        .ERROR_LAYER_NOT_PRESENT => VulkanError.LayerNotPresent,
-        .ERROR_EXTENSION_NOT_PRESENT => VulkanError.ExtensionNotPresent,
-        .ERROR_FEATURE_NOT_PRESENT => VulkanError.FeatureNotPresent,
-        .ERROR_INCOMPATIBLE_DRIVER => VulkanError.IncompatibleDriver,
-        .ERROR_TOO_MANY_OBJECTS => VulkanError.TooManyObjects,
-        .ERROR_FORMAT_NOT_SUPPORTED => VulkanError.FormatNotSupported,
-        .ERROR_FRAGMENTED_POOL => VulkanError.FragmentedPool,
-        .ERROR_UNKNOWN => VulkanError.UnknownError,
-        .ERROR_OUT_OF_POOL_MEMORY => VulkanError.OutOfPoolMemory,
-        .ERROR_INVALID_EXTERNAL_HANDLE => VulkanError.InvalidExternalHandle,
-        .ERROR_FRAGMENTATION => VulkanError.Fragmentation,
-        .ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS => VulkanError.InvalidAddress,
-        .ERROR_SURFACE_LOST_KHR => VulkanError.SurfaceLost,
-        .ERROR_NATIVE_WINDOW_IN_USE_KHR => VulkanError.NativeWindowInUse,
-        .ERROR_OUT_OF_DATE_KHR => VulkanError.OutOfDate,
-        .ERROR_INCOMPATIBLE_DISPLAY_KHR => VulkanError.IncompatibleDisplay,
-        .ERROR_VALIDATION_FAILED_EXT => VulkanError.ValidationFailed,
-        .ERROR_INVALID_SHADER_NV => VulkanError.InvalidShader,
-        .ERROR_INCOMPATIBLE_VERSION_KHR => VulkanError.IncompatibleVersion,
-        .ERROR_INVALID_DRM_FORMAT_MODIFIER_PLANE_LAYOUT_EXT => VulkanError.InvalidDrmFormatModifierPlaneLayout,
-        .ERROR_NOT_PERMITTED_EXT => VulkanError.NotPermitted,
-        .ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT => VulkanError.FullScreenExclusiveModeLost,
-        .ERROR_PIPELINE_COMPILE_REQUIRED_EXT => VulkanError.PipelineCompileRequired,
-        else => unreachable,
-    };
-}
-
 // Additional abstractions
 
-fn getInstanceLayers(allocator: *Allocator) !NameSet {
-    var extensionCount: u32 = 0;
-    try convert(vez.enumerateInstanceExtensionProperties(null, &extensionCount, null));
-
-    var extensions = try allocator.alloc(vk.ExtensionProperties, extensionCount);
-    defer allocator.free(extensions);
-    try convert(vez.enumerateInstanceExtensionProperties(null, &extensionCount, extensions.ptr));
-
-    for (extensions) |extension| {
-        // try stdout.print("{}\n", .{@ptrCast([*:0]const u8, &extension.extensionName)});
-    }
-
-    // Enumerate all available instance availableLayers.
-    var layerCount: u32 = 0;
-    try convert(vez.enumerateInstanceLayerProperties(&layerCount, null));
-
-    var layerProperties = try allocator.alloc(vk.LayerProperties, layerCount);
-    defer allocator.free(layerProperties);
-
-    try convert(vez.enumerateInstanceLayerProperties(&layerCount, layerProperties.ptr));
-    var set = NameSet.init(allocator);
-    for (layerProperties) |prop| {
-        _ = try set.put(prop.layerName, .{});
-    }
-    return set;
-}
 
 pub fn createFramebuffer() !void {
     framebuffer.deinit(device);
@@ -360,7 +230,7 @@ fn createShaderModule(allocator: *Allocator, filename: []const u8, spirv: bool, 
 
         vez.destroyShaderModule(device, shaderModule);
 
-        try stdout.print("{}\n", .{infoLog});
+        std.log.err("{}\n", .{infoLog});
         return error.CouldNotCompile;
     }
 
@@ -449,7 +319,7 @@ fn setWindowCenter(wndw: *c.Window) !void {
         var monitor_x: i32 = undefined;
         var monitor_y: i32 = undefined;
         if (monitor == null) {
-            @panic("ono");
+            @panic("No monitor found.");
         }
         c.glfwGetMonitorPos(monitor, &monitor_x, &monitor_y);
 
@@ -484,6 +354,8 @@ fn props(dev: vk.PhysicalDevice) vk.PhysicalDeviceProperties {
 }
 
 pub fn run(allocator: *Allocator, app: Application) !void {
+    const stdout = std.io.getStdOut().outStream();
+    
     callbacks = app.callbacks;
     var availableLayers = try getInstanceLayers(allocator);
     defer availableLayers.deinit();
@@ -547,11 +419,6 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         }
     }
     physicalDevice = physicalDevices[0];
-    
-    c.glfwWindowHint(c.CLIENT_API, c.NO_API);
-    window = c.glfwCreateWindow(WIDTH, HEIGHT, NAME, null, null) orelse return error.FailedToCreateWindow;
-    c.glfwHideWindow(window);
-    try setWindowCenter(window);
 
     // Create the Vulkan device handle.
     var deviceExtensions: []const [*:0]const u8 = &[_][*:0]const u8{vk.KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -563,17 +430,21 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     };
     try convert(vez.createDevice(physicalDevice, &deviceCreateInfo, &device));
 
+    try app.load();
+    
+    c.glfwWindowHint(c.CLIENT_API, c.NO_API);
+    window = c.glfwCreateWindow(WIDTH, HEIGHT, NAME, null, null) orelse return error.FailedToCreateWindow;
+    try setWindowCenter(window);
+
     // Set callbacks.
-    // TODO: handle glfw errors
     _ = c.glfwSetWindowSizeCallback(window, windowSizeCallback);
     _ = c.glfwSetCursorPosCallback(window, cursorPosCallback);
     _ = c.glfwSetMouseButtonCallback(window, mouseButtonCallback);
-    // c.glfwSetScrollCallback(window, MouseScrollCallback);
     _ = c.glfwSetKeyCallback(window, keyCallback);
+    // c.glfwSetScrollCallback(window, MouseScrollCallback);
 
     // Create a surface from the GLFW window handle.
-    // TODO: handle glfw errors
-    _ = c.glfwCreateWindowSurface(instance, window, null, &surface);
+    try convert(c.glfwCreateWindowSurface(instance, window, null, &surface));
     c.glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     // Create the swapchain.
@@ -590,7 +461,6 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     }
 
     try app.initialize();
-    c.glfwShowWindow(window);
 
     var lastTime = c.glfwGetTime();
 
@@ -616,7 +486,9 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         // Display the fps in the window title bar.
         frameCount += 1;
         if (elapsedTime >= 1.0) {
-            const text = try std.fmt.allocPrint(allocator, "{} ({} FPS)", .{ app.name, frameCount });
+            const size = getWindowSize();
+            const nspp = 1000000000 / frameCount / (size[0] * size[1]);
+            const text = try std.fmt.allocPrint(allocator, "{} ({} FPS, {} nspp)", .{ app.name, frameCount, nspp });
             c.glfwSetWindowTitle(window, text.ptr);
             elapsedTime = 0.0;
             frameCount = 0;
@@ -636,15 +508,13 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     vk.vkDestroySurfaceKHR(instance, surface, null);
     vez.destroyInstance(instance);
 }
+
 fn shouldQuit() bool {
     return c.glfwWindowShouldClose(window) != 0 or quitSignaled;
-    // return true;
 }
 
 export fn windowSizeCallback(wndw: ?*c.Window, width: c_int, height: c_int) callconv(.C) void {
-    // windowWidth = width;
-    // windowHeight = height;
-    resize() catch unreachable;
+    resize() catch std.log.err("resize() crashed", .{});
 }
 
 pub fn resize() !void {
