@@ -289,64 +289,6 @@ pub fn cmdSetFullViewport() void {
     vez.cmdSetScissor(0, 1, &[_]vk.Rect2D{scissor});
 }
 
-fn setWindowCenter(wndw: *c.Window) !void {
-    // Get window position and size
-    var posX: i32 = undefined;
-    var posY: i32 = undefined;
-    c.glfwGetWindowPos(wndw, &posX, &posY);
-
-    var size = getWindowSize();
-
-    // Halve the window size and use it to adjust the window position to the center of the window
-    var halfwidth = @intCast(i32, size[0] >> 1);
-    var halfheight = @intCast(i32, size[1] >> 1);
-    posX += halfwidth;
-    posY += halfheight;
-
-    // Get the list of monitors
-    var count: i32 = undefined;
-    var monitors: []?*c.Monitor = (c.glfwGetMonitors(&count) orelse return)[0..@intCast(usize, count)];
-
-    // Figure out which monitor the window is in
-    var owner: ?*c.Monitor = null;
-    var owner_x: i32 = undefined;
-    var owner_y: i32 = undefined;
-    var owner_width: i32 = undefined;
-    var owner_height: i32 = undefined;
-
-    for (monitors) |monitor| {
-        // Get the monitor position
-        var monitor_x: i32 = undefined;
-        var monitor_y: i32 = undefined;
-        if (monitor == null) {
-            @panic("No monitor found.");
-        }
-        c.glfwGetMonitorPos(monitor, &monitor_x, &monitor_y);
-
-        // Get the monitor size from its video mode
-        var monitor_width: i32 = undefined;
-        var monitor_height: i32 = undefined;
-        var monitor_vidmode: *const c.Vidmode = c.glfwGetVideoMode(monitor) orelse continue;
-
-        monitor_width = monitor_vidmode.width;
-        monitor_height = monitor_vidmode.height;
-
-        // Set the owner to this monitor if the center of the window is within its bounding box
-        if ((posX > monitor_x and posX < (monitor_x + monitor_width)) and (posY > monitor_y and posY < (monitor_y + monitor_height))) {
-            owner = monitor;
-            owner_x = monitor_x;
-            owner_y = monitor_y;
-            owner_width = monitor_width;
-            owner_height = monitor_height;
-        }
-    }
-
-    // Set the window position to the center of the owner monitor
-    if (owner) |own| {
-        c.glfwSetWindowPos(wndw, owner_x + @divTrunc(owner_width, 2) - halfwidth, owner_y + @divTrunc(owner_height, 2) - halfheight);
-    }
-}
-
 fn props(dev: vk.PhysicalDevice) vk.PhysicalDeviceProperties {
     var properties: vk.PhysicalDeviceProperties = undefined;
     vez.getPhysicalDeviceProperties(dev, &properties);
@@ -409,13 +351,15 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     var physicalDevices = try allocator.alloc(vk.PhysicalDevice, physicalDeviceCount);
     defer allocator.free(physicalDevices);
     try convert(vez.enumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.ptr));
-
-    for (physicalDevices) |pdevice, i| {
-        const name = @ptrCast([*:0]const u8, &props(pdevice).deviceName);
-        if (i == 0) {
-            try stdout.print("-> {}\n", .{name});
-        } else {
-            try stdout.print("   {}\n", .{name});
+    
+    if (isDebug) {
+        for (physicalDevices) |pdevice, i| {
+            const name = @ptrCast([*:0]const u8, &props(pdevice).deviceName);
+            if (i == 0) {
+                try stdout.print("-> {}\n", .{name});
+            } else {
+                try stdout.print("   {}\n", .{name});
+            }
         }
     }
     physicalDevice = physicalDevices[0];
@@ -434,7 +378,6 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     
     c.glfwWindowHint(c.CLIENT_API, c.NO_API);
     window = c.glfwCreateWindow(WIDTH, HEIGHT, NAME, null, null) orelse return error.FailedToCreateWindow;
-    try setWindowCenter(window);
 
     // Set callbacks.
     _ = c.glfwSetWindowSizeCallback(window, windowSizeCallback);
