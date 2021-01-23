@@ -31,7 +31,7 @@ vec2 dimensions;
 
 vec3 lower = vec3(0, 0, 0);
 float scale = 1;
-
+void find(vec3 pos);
 vec2 sam(vec2 p)
 {
     return texture(values, (p + vec2(.5, .5)) * dimensions).xy;
@@ -49,31 +49,24 @@ float sample_at(vec3 d, float scale)
 
 float interpol_world(vec3 pos)
 {
+    find(pos);
     vec3 d = clamp((pos - lower) / scale, 0, 1); //smoothstep(lower, higher, pos);//
     return sample_at(d, scale);
 }
 
 vec3 gradient(vec3 pos)
 {
-    vec3 d = clamp((pos - lower) / scale, 0, 1);
-    vec2 p = ivec2((index * 2) % textureWidth, index * 2 / textureWidth * 2);
-    vec2 ph = p + vec2(vpercell, 0);
+    vec2 dp = vec2(0.001, 0);
+    vec3 d = vec3(
+        interpol_world(pos + dp.xyy),
+        interpol_world(pos + dp.yxy),
+        interpol_world(pos + dp.yyx));
+    vec3 k = vec3(
+        interpol_world(pos - dp.xyy),
+        interpol_world(pos - dp.yxy),
+        interpol_world(pos - dp.yyx));
 
-    vec2 xzl = (vec2(d.x, 0) + p);
-
-
-    vec2 xl = sam(p + vec2(0, d.y));
-    vec2 xh = sam(p + vec2(1, d.y));
-    vec2 dx = mix(vec2(xl.x, xh.x), vec2(xl.y, xh.y), d.z);
-
-    vec2 yl = sam(p + vec2(d.x, 0));
-    vec2 yh = sam(p + vec2(d.x, 1));
-    vec2 dy = mix(vec2(yl.x, yh.x), vec2(yl.y, yh.y), d.z);
-
-
-    vec2 dz = sam(p + d.xy);
-
-    return vec3(dx.y - dx.x, dy.y - dy.x, dz.y - dz.x);
+    return d - k;
 }
 
 void scale_down(ivec3 p)
@@ -132,7 +125,7 @@ void main()
 			imageStore(dest, pospx, vec4(0.005, 0.01, 0.2, 1.0));
 			return;
 		}
-		find(pos);
+		//find(pos);
         prox = interpol_world(pos);
         pos += dir * prox;
     }
@@ -153,7 +146,7 @@ void main()
             shade(pospx, attenuation, normal);
             return;
         }
-        find(pos);
+        //find(pos);
         prox = interpol_world(pos);
         pos += dir * prox;// * (1 - inf.margin);
     }
