@@ -17,14 +17,16 @@ const Vertex = load_ply.Vertex;
 const texwidth = 16384;
 const valwidth = texwidth * 2;
 
-pub const valpernode = 2;
+pub const valres = 2;
+pub const valcount = valres * valres * valres;
 pub const subdiv = 2;
+pub const childcount = subdiv * subdiv * subdiv;
 
-const debug_construction = true;
-pub var max_depth: u32 = 10;
+const debug_construction = false;
+pub var max_depth: u32 = 5;
 const padding = 0.1;
 
-pub const ChildRefs = [8]i32;
+pub const ChildRefs = [childcount]i32;
 
 pub const SerialModel = struct {
     tree: []ChildRefs,
@@ -45,8 +47,8 @@ const Ref = union(enum) {
 };
 
 pub const OctNode = struct {
-    children: [8]Ref = [1]Ref{.no_child} ** 8,
-    values: [8]u8 = [_]u8{0} ** 8,
+    children: [childcount]Ref = [_]Ref{.no_child} ** childcount,
+    values: [valcount]u8 = [_]u8{0} ** valcount,
 };
 
 pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
@@ -80,17 +82,15 @@ pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
     return m;
 }
 
-// fn serialize(tree: []const OctNode, current: usize, nodes: [][2]i32, values: []u8, val_width: usize) void {}
-
 var model: ArrayList(OctNode) = undefined;
-var leaves: ArrayList([8]u8) = undefined;
+var leaves: ArrayList([valcount]u8) = undefined;
 
 pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vertex *raw_vertices, int32_t vertexcount, int32_t depth)
     @setRuntimeSafety(debug_construction);
     normalize(vertices);
     model = ArrayList(OctNode).init(allocator);
     defer model.deinit();
-    leaves = ArrayList([8]u8).init(allocator);
+    leaves = ArrayList([valcount]u8).init(allocator);
     defer leaves.deinit();
     {
         possibleBuffer = try allocator.alloc(Vertex, vertices.len * 12);
@@ -99,9 +99,9 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
         _ = try construct(vertices, 0, vec.zero(), 2);
     }
     const values_count = model.items.len + leaves.items.len;
-    const height = roundUp(@intCast(u32, values_count), texwidth / 2) * 2;
+    const height = roundUp(@intCast(u32, values_count), texwidth / valres) * valres;
 
-    const pixelData = try allocator.alloc(u8, texwidth * 2 * height);
+    const pixelData = try allocator.alloc(u8, valwidth * height);
     errdefer allocator.free(pixelData);
     var octree = try allocator.alloc(ChildRefs, model.items.len);
 
@@ -113,41 +113,15 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
                 .no_child => -1,
             };
         }
-
         const val = node.values;
-        const texbase = 2 * valwidth * (4 * i / valwidth) + 4 * i % valwidth;
-
-        var x: usize = 0;
-        while (x < valpernode) : (x += 1) {
-            var y: usize = 0;
-            while (y < valpernode) : (y += 1) {
-                var z: usize = 0;
-                while (z < valpernode) : (z += 1) {
-                    const vali = x + y * valpernode + z * valpernode * valpernode;
-                    const texi = texbase + z + x * valpernode + y * valwidth;
-                    pixelData[texi] = val[vali];
-                }
-            }
-        }
+        mapValToTexture(pixelData, node.values, i);
     }
 
     for (leaves.items) |val, leafi| {
         const i = leafi + model.items.len;
-        const texbase = 2 * valwidth * (4 * i / valwidth) + 4 * i % valwidth;
-
-        var x: usize = 0;
-        while (x < valpernode) : (x += 1) {
-            var y: usize = 0;
-            while (y < valpernode) : (y += 1) {
-                var z: usize = 0;
-                while (z < valpernode) : (z += 1) {
-                    const vali = x + y * valpernode + z * valpernode * valpernode;
-                    const texi = texbase + z + x * valpernode + y * valwidth;
-                    pixelData[texi] = val[vali];
-                }
-            }
-        }
+        mapValToTexture(pixelData, val, leafi + model.items.len);
     }
+    try std.io.getStdOut().writer().print("mid nodes  {}\nleaf nodes {}", .{model.items.len, leaves.items.len});
 
     return SerialModel{
         .tree = octree,
@@ -157,13 +131,26 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
     };
 }
 
-fn split(i: usize) vec {
-    return vec.new(
-        @intToFloat(f32, i % 2),
-        @intToFloat(f32, (i / 2) % 2),
-        @intToFloat(f32, (i / 2 / 2) % 2),
-    );
+fn mapValToTexture(tex: []u8, v: [valcount]u8, i: usize) void {
+    // black magic
+    const texbase = valres * valwidth * (valres * valres * i / valwidth)
+                    + valres * valres * i % valwidth;
+    
+    var x: usize = 0;
+    while (x < valres) : (x += 1) {
+        var y: usize = 0;
+        while (y < valres) : (y += 1) {
+            var z: usize = 0;
+            while (z < valres) : (z += 1) {
+                const vali = x + y * valres + z * valres * valres;
+                const texi = texbase + z + x * valres + y * valwidth;
+                tex[texi] = v[vali];
+            }
+        }
+    }
 }
+
+
 fn normalize(vertices: []Vertex) void {
     for (vertices) |*vert| {
         vert.Position.y *= -1;
@@ -198,21 +185,19 @@ fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Alloca
     var possible = try getPossible(center, center_value + @sqrt(3.0) / 2.0 * scale, vertices);
     defer possibleCount = start;
 
-    var values: [8]f32 = undefined;
+    var values: [valcount]f32 = undefined;
     for (values) |*val, i| {
-        val.* = distanceAt(pos.add(split(i).scale(scale)), possible);
+        val.* = distanceAt(pos.add(splitValueIndex(i).scale(scale)), possible);
     }
     var current = OctNode{ .values = discretize(values, scale) };
     var this: Ref = .no_child;
 
     if (depth < max_depth) {
-
-        // var do_subdivide = [1]bool{false} ** 8;
+        const subscale = scale / subdiv;
         var i: usize = 0;
-        const subscale = scale * 0.5;
-        while (i < 8) : (i += 1) {
+        while (i < childcount) : (i += 1) {
             // TODO: move fixed point to remove redundancy
-            const subpos = pos.add(split(i).scale(subscale));
+            const subpos = pos.add(splitChildIndex(i).scale(subscale));
             const subcenter = subpos.add(vec.one().scale(0.5 * subscale));
             const subcenter_value = trueDistanceAt(subcenter, vertices);
 
@@ -234,10 +219,26 @@ fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Alloca
     return this;
 }
 
+fn splitValueIndex(i: usize) vec {
+    return vec.new(
+        @intToFloat(f32, i % valres) / (valres - 1),
+        @intToFloat(f32, (i / valres) % valres) / (valres - 1),
+        @intToFloat(f32, (i / valres / valres) % valres) / (valres - 1),
+    );
+}
+fn splitChildIndex(i: usize) vec {
+    return vec.new(
+        @intToFloat(f32, i % subdiv) / (subdiv - 1),
+        @intToFloat(f32, (i / subdiv) % subdiv) / (subdiv - 1),
+        @intToFloat(f32, (i / subdiv / subdiv) % subdiv) / (subdiv - 1),
+    );
+}
+
+
 const from: f32 = -1;
 const to: f32 = 3;
-fn discretize(x: [8]f32, scale: f32) [8]u8 {
-    var res: [8]u8 = undefined;
+fn discretize(x: [valcount]f32, scale: f32) [valcount]u8 {
+    var res: [valcount]u8 = undefined;
     for (x) |val, i| {
         const v = (val / scale - from) / (to - from);
         res[i] = @floatToInt(u8, std.math.clamp(v, 0, 1) * 255);

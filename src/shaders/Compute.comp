@@ -2,7 +2,7 @@
 
 #define groupSize 8
 #define subdiv 2
-#define vpercell 2
+#define valres 2
 #define textureWidth 16384
 
 layout (local_size_x = groupSize, local_size_y = groupSize, local_size_z = 1 ) in;
@@ -27,51 +27,54 @@ layout(binding = 2) uniform sampler2D values;
 layout(binding = 3) uniform restrict writeonly image2D dest;
 
 int index = 0;
-vec2 dimensions;
+vec2 dimfactor;
 
 vec3 lower = vec3(0, 0, 0);
 float scale = 1;
 
-vec2 sam(vec2 p)
+vec4 sam(vec2 p)
 {
-    return texture(values, (p + vec2(.5, .5)) * dimensions).xy;
+    return texture(values, (p + vec2(.5, .5)) * dimfactor);
 }
 
 float sample_at(vec3 d, float scale)
 {
-    int cellindex = index * vpercell;
-    vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * vpercell);
+    int cellindex = index * valres;
+    vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * valres);
 
-    vec2 load = sam(d.xy + p);
-    float result = (mix(load.x, load.y, d.z) - .25) * scale * 4;
+    vec4 load = sam(d.xy + p);
+    vec4 weights = vec4(1 - d.z, d.z, 0, 0);
+    float interpolated = dot(load, clamp(weights, 0, 1));
+    float result = (interpolated - .25) * scale * 4;
     return result;
 }
 
 float interpol_world(vec3 pos)
 {
-    vec3 d = clamp((pos - lower) / scale, 0, 1); //smoothstep(lower, higher, pos);//
+    vec3 d = clamp((pos - lower) / scale, 0, 1) * (valres - 1); //smoothstep(lower, higher, pos);//
     return sample_at(d, scale);
 }
 
 vec3 gradient(vec3 pos)
 {
-    vec3 d = clamp((pos - lower) / scale, 0, 1);
-    vec2 p = ivec2((index * 2) % textureWidth, index * 2 / textureWidth * 2);
-    vec2 ph = p + vec2(vpercell, 0);
+    int cellindex = index * valres;
+    vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * valres);
+    vec2 ph = p + vec2(valres, 0);
 
+    vec3 d = clamp((pos - lower) / scale, 0, 1);
     vec2 xzl = (vec2(d.x, 0) + p);
 
 
-    vec2 xl = sam(p + vec2(0, d.y));
-    vec2 xh = sam(p + vec2(1, d.y));
+    vec2 xl = sam(p + vec2(0, d.y)).xy;
+    vec2 xh = sam(p + vec2(1, d.y)).xy;
     vec2 dx = mix(vec2(xl.x, xh.x), vec2(xl.y, xh.y), d.z);
 
-    vec2 yl = sam(p + vec2(d.x, 0));
-    vec2 yh = sam(p + vec2(d.x, 1));
+    vec2 yl = sam(p + vec2(d.x, 0)).xy;
+    vec2 yh = sam(p + vec2(d.x, 1)).xy;
     vec2 dy = mix(vec2(yl.x, yh.x), vec2(yl.y, yh.y), d.z);
 
 
-    vec2 dz = sam(p + d.xy);
+    vec2 dz = sam(p + d.xy).xy;
 
     return vec3(dx.y - dx.x, dy.y - dy.x, dz.y - dz.x);
 }
@@ -117,7 +120,7 @@ void main()
 {
 	ivec2 pospx = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 destsize = imageSize(dest);
-	dimensions = vec2(1) / textureSize(values, 0);
+	dimfactor = vec2(1) / textureSize(values, 0);
 	if (pospx.x >= destsize.x || pospx.y >= destsize.y) {
     	return;
 	}
