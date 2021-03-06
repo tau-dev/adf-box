@@ -88,6 +88,6 @@ fn get_mtime(path: []const u8) ?i128 {
     };
     defer f.close();
 
-    const stats = f.stat() catch unreachable;
+    const stats = f.stat() catch return null;
     return stats.mtime;
 }
