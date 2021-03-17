@@ -15,9 +15,9 @@ const Vertex = load_ply.Vertex;
 
 // TODO: handle restrictive maxImageDimension2D
 const texwidth = 16384;
-const valwidth = texwidth * 2;
+const valwidth = texwidth * valres;
 
-pub const valres = 2;
+pub const valres = 4;
 pub const valcount = valres * valres * valres;
 pub const subdiv = 2;
 pub const childcount = subdiv * subdiv * subdiv;
@@ -121,7 +121,7 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
         const i = leafi + model.items.len;
         mapValToTexture(pixelData, val, leafi + model.items.len);
     }
-    try std.io.getStdOut().writer().print("mid nodes  {}\nleaf nodes {}", .{model.items.len, leaves.items.len});
+    try std.io.getStdOut().writer().print("mid nodes  {}\nleaf nodes {}\n", .{model.items.len, leaves.items.len});
 
     return SerialModel{
         .tree = octree,
@@ -196,12 +196,12 @@ fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Alloca
         const subscale = scale / subdiv;
         var i: usize = 0;
         while (i < childcount) : (i += 1) {
-            // TODO: move fixed point to remove redundancy
             const subpos = pos.add(splitChildIndex(i).scale(subscale));
             const subcenter = subpos.add(vec.one().scale(0.5 * subscale));
             const subcenter_value = trueDistanceAt(subcenter, vertices);
 
             if (subcenter_value < subscale * @sqrt(3.0)) {
+
                 if (this == .no_child) {
                     this = .{ .full_node = model.items.len };
                     try model.append(current);
@@ -233,7 +233,6 @@ fn splitChildIndex(i: usize) vec {
         @intToFloat(f32, (i / subdiv / subdiv) % subdiv) / (subdiv - 1),
     );
 }
-
 
 const from: f32 = -1;
 const to: f32 = 3;

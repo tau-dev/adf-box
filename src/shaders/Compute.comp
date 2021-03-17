@@ -2,7 +2,7 @@
 
 #define groupSize 8
 #define subdiv 2
-#define valres 2
+#define valres 4
 #define textureWidth 16384
 
 layout (local_size_x = groupSize, local_size_y = groupSize, local_size_z = 1 ) in;
@@ -42,8 +42,11 @@ float sample_at(vec3 d, float scale)
     int cellindex = index * valres;
     vec2 p = ivec2(cellindex % textureWidth, cellindex / textureWidth * valres);
 
-    vec4 load = sam(d.xy + p);
-    float result = (mix(load.x, load.y, d.z) - .25) * scale * 4;
+    vec4 load = sam(d.xy * 3 + p);
+    float f = d.z * 3;
+    vec4 weights = vec4(1 - f, 1 - abs(f - 1), 1 - abs(f - 2), f - 2);
+    float interpolated = dot(load, clamp(weights, 0, 1));
+    float result = (interpolated - .25) * scale * 4;
     return result;
 }
 

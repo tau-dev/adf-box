@@ -41,7 +41,7 @@ pub fn load(allocator: *Allocator, filename: []const u8) !SerialModel {
         }
     }
 
-    model.values = try allocator.alloc(u8, model.width * 2 * model.height);
+    model.values = try allocator.alloc(u8, model.width * model.height * @import("model.zig").valres);
     errdefer allocator.free(model.values);
     try reader.readNoEof(model.values);
 

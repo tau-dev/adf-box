@@ -431,7 +431,7 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         if (elapsedTime >= 1.0) {
             const size = getWindowSize();
             const nspp = 1000000000 / frameCount / (size[0] * size[1]);
-            const text = try std.fmt.allocPrint(allocator, "{} ({} FPS, {} nspp)", .{ app.name, frameCount, nspp });
+            const text = try std.fmt.allocPrintZ(allocator, "{} ({} FPS, {} nspp)", .{ app.name, frameCount, nspp });
             c.glfwSetWindowTitle(window, text.ptr);
             elapsedTime = 0.0;
             frameCount = 0;

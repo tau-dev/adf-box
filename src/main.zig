@@ -36,7 +36,7 @@ const UniformBuffer = struct {
     buffer_size: i32,
     fov: f32,
     margin: f32 = 0.0001,
-    limit: f32 = 3,
+    limit: f32 = 4,
     light: mat.vec4,
     screeen_size: mat.vec2,
     intensity: f32 = 0.1,
@@ -203,7 +203,7 @@ pub fn main() anyerror!void {
 
 
     try base.run(allocator, .{
-        .name = "V-EZ-Test",
+        .name = "ADFbox",
         .load = load,
         .initialize = initialize,
         .cleanup = cleanup,
@@ -342,25 +342,29 @@ fn update(delta: f32) !void {
 
     var viewMat = mat4.identity().rotate(view.x, vec.up()).rotate(view.y, vec.right());
 
+    var v = delta;
+    if (getKey(c.KEY_SPACE)) {
+        v *= 0.25;
+    }
     if (getKey(c.KEY_W) or getKey(c.KEY_KP_8)) {
-        movePos(matmul(viewMat, vec.new(0, 0, 1)), delta);
+        movePos(matmul(viewMat, vec.new(0, 0, 1)), v);
     }
     if (getKey(c.KEY_S) or getKey(c.KEY_KP_2)) {
-        movePos(matmul(viewMat, vec.new(0, 0, -1)), delta);
+        movePos(matmul(viewMat, vec.new(0, 0, -1)), v);
     }
     if (getKey(c.KEY_D) or getKey(c.KEY_KP_6)) {
-        movePos(matmul(viewMat, vec.new(1, 0, 0)), delta);
+        movePos(matmul(viewMat, vec.new(1, 0, 0)), v);
     }
     if (getKey(c.KEY_A) or getKey(c.KEY_KP_4)) {
-        movePos(matmul(viewMat, vec.new(-1, 0, 0)), delta);
+        movePos(matmul(viewMat, vec.new(-1, 0, 0)), v);
     }
     if (getKey(c.KEY_LEFT_SHIFT) or getKey(c.KEY_KP_9)) {
-        movePos(vec.new(0, -1, 0), delta);
+        movePos(vec.new(0, -1, 0), v);
     }
     if (getKey(c.KEY_LEFT_CONTROL) or getKey(c.KEY_KP_3)) {
-        movePos(vec.new(0, 1, 0), delta);
+        movePos(vec.new(0, 1, 0), v);
     }
-    var c0 = delta * 1; // get it?
+    var c0 = v * 2; // get it?
     if (getKey(c.KEY_U)) {
         light.x += c0;
     }
@@ -438,7 +442,7 @@ fn createModel() !void {
 
     // Create the device side image.
     var imageCreateInfo = vez.ImageCreateInfo{
-        .format = .FORMAT_R8G8_UNORM,
+        .format = .FORMAT_R8G8B8A8_UNORM,
         .extent = .{ .width = data.width, .height = data.height, .depth = 1 },
         .usage = vk.IMAGE_USAGE_TRANSFER_DST_BIT | vk.IMAGE_USAGE_SAMPLED_BIT,
     };
