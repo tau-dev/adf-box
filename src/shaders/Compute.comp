@@ -57,9 +57,9 @@ float interpol_world(vec3 pos)
     return sample_at(d, scale);
 }
 
-vec3 gradient(vec3 pos)
+vec3 gradient(vec3 pos, float scale)
 {
-    vec2 dp = vec2(0.001, 0);
+    vec2 dp = vec2(scale, 0);
     vec3 d = vec3(
         interpol_world(pos + dp.xyy),
         interpol_world(pos + dp.yxy),
@@ -134,7 +134,7 @@ void main()
     }
 
     dir = normalize(light.xyz - pos);
-    vec3 normal = normalize(gradient(pos));
+    vec3 normal = normalize(gradient(pos, 0.001));
     pos += dir * margin * 10;
     float angle = dot(dir, normal);
     if (angle < 0) {

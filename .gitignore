@@ -1,3 +1,6 @@
 zig-cache/*
 *.sublime-workspace
 *callgrind*
+models/*
+src/shaders/bin/*
+*.adf

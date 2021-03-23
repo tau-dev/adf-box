@@ -30,8 +30,6 @@ const Vertex = struct {
 
 const UniformBuffer = struct {
     view: mat4,
-    // model: mat4,
-    // projection: mat4,
     position: mat.vec4,
     buffer_size: i32,
     fov: f32,
