@@ -352,17 +352,18 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     defer allocator.free(physicalDevices);
     try convert(vez.enumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.ptr));
     
+    const chosenDevice = 0;
     if (isDebug) {
         for (physicalDevices) |pdevice, i| {
             const name = @ptrCast([*:0]const u8, &props(pdevice).deviceName);
-            if (i == 0) {
+            if (i == chosenDevice) {
                 try stdout.print("-> {}\n", .{name});
             } else {
                 try stdout.print("   {}\n", .{name});
             }
         }
     }
-    physicalDevice = physicalDevices[0];
+    physicalDevice = physicalDevices[chosenDevice];
 
     // Create the Vulkan device handle.
     var deviceExtensions: []const [*:0]const u8 = &[_][*:0]const u8{vk.KHR_SWAPCHAIN_EXTENSION_NAME};

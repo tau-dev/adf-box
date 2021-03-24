@@ -35,7 +35,7 @@ zig build
 
 (I have not yet figured out how to convince the zig build system to set a proper rpath, so on Linux you can only execute the binary from the project root folder like this.)
 
-`<model>` should be a `.adf` (custom format, see below) or `.ply` file. When loading a `ply`, you can specify the `<depth>` of the generated ADF (e.g. a depth of 10 makes a resolution of 1024³). The ADF generation takes a time of roughly O(source polycount * depth) - a few seconds for reasonable models - but will emit a `.adf` file, which can be loaded directly.
+`<model>` should be a `.adf` (custom format, see below) or `.ply` file. When loading a `ply`, you can specify the `<depth>` of the generated ADF (making for a cell resolution of 1 / (3 x 2ᵈᵉᵖᵗʰ); default is 5). The ADF generation takes a time of roughly O(source polycount * depth) - a few seconds for reasonable models - but will emit a `.adf` file, which can be loaded directly.
 
 The `ply` model must have a `vertex` element with six float properties, taken as position and normal. It is recommended to ensure (using e.g. [MeshLab](https://www.meshlab.net)) that the mesh is a closed 2-manifold. For best results, compute vertex normals weighed by angle. As an example, a touched-up [Stanford Bunny](https://graphics.stanford.edu/data/3Dscanrep/) is contained in the project as `bunny.ply`.
 
