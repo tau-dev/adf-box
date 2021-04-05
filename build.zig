@@ -43,17 +43,19 @@ pub fn build(b: *Builder) void {
     exe.addLibPath("V-EZ/Bin/x86_64/");
     exe.linkSystemLibrary("VEZ");
 
-    if (target.getOsTag() == .windows) { // uses respective standard installation paths
+    if (target.getOsTag() == .windows) {
         exe.linkSystemLibrary("user32");
         exe.linkSystemLibrary("gdi32");
         exe.linkSystemLibrary("shell32");
 
+        // standard installation path
         exe.addLibPath("C:/Program Files (x86)/GLFW/lib-vc2019");
         exe.linkSystemLibrary("glfw3");
         var vkbase = std.fs.cwd().openDir("C:/VulkanSDK", .{ .access_sub_paths = false, .iterate = true }) catch unreachable;
         defer vkbase.close();
         // TODO: find newest version
         const first = vkbase.iterate().next() catch unreachable orelse unreachable;
+        
         const vkpath = join(b, join(b, "C:/VulkanSDK", first.name), "Lib");
         exe.addLibPath(vkpath);
         exe.linkSystemLibrary("vulkan-1");
@@ -61,8 +63,8 @@ pub fn build(b: *Builder) void {
         const dll = b.addInstallBinFile("./V-EZ/Bin/x86_64/VEZ.dll", "VEZ.dll");
         exe.step.dependOn(&dll.step);
     } else {
-        exe.linkSystemLibrary("glfw");
-        exe.linkSystemLibrary("vulkan");
+        exe.linkSystemLibrary("libglfw.so.3");
+        exe.linkSystemLibrary("libvulkan.so.1");
     }
     exe.install();
 
