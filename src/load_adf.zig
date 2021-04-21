@@ -52,7 +52,6 @@ fn expect(read: *Reader, expected: []const u8) bool {
     return read.isBytes(expected) catch |err| false;
 }
 
-/// may invalidate model on error
 pub fn save(model: SerialModel, filename: []const u8) !void {
     var file = try std.fs.cwd().createFile(filename, .{ .read = false, .exclusive = false, .lock = .Exclusive });
     defer file.close();
@@ -65,19 +64,19 @@ pub fn save(model: SerialModel, filename: []const u8) !void {
 
     for (model.tree) |*node| {
         for (node.*) |*v| {
-            v.* = mem.nativeToLittle(i32, v.*); // try write(&writer, v);
-            // try write(&writer, v.*);
+            v.* = mem.nativeToLittle(i32, v.*);
         }
     }
+    defer {
+        for (model.tree) |*node| {
+            for (node.*) |*v| {
+                v.* = mem.littleToNative(i32, v.*);
+            }
+        }
+    }
+
     const serialized = @ptrCast([*]u8, model.tree.ptr)[0 .. model.tree.len * @sizeOf(ChildRefs)];
     try writer.writeAll(serialized);
-
-    for (model.tree) |*node| {
-        for (node.*) |*v| {
-            v.* = mem.littleToNative(i32, v.*); // try write(&writer, v);
-        }
-    }
-
     try writer.writeAll(model.values);
 }
 

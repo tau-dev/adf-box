@@ -172,8 +172,8 @@ fn findMemoryType(physicalDevice: vk.PhysicalDevice, typeFilter: u32, properties
 
 
 pub fn main() anyerror!void {
-    const stdout = std.io.getStdOut().outStream();
-    const usage = "usage: ${} <filename> [depth]";
+    const stdout = std.io.getStdOut().writer();
+    const usage = "usage: ${s} <filename> [depth]";
 
     var args = std.process.ArgIterator.init();
 
@@ -300,8 +300,11 @@ fn onResize(width: u32, height: u32) !void {
     try createCommandBuffer();
 }
 fn onKey(key: i32, down: bool) anyerror!void {
-    if (key == c.KEY_ESCAPE and down) {
+    if (key == c.KEY_TAB and down) {
         base.toggleFullscreen();
+    }
+    if (key == c.KEY_ESCAPE and down) {
+        base.quitSignaled = true;
     }
 }
 fn onMousePos(x: i32, y: i32) anyerror!void {}

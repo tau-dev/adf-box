@@ -25,7 +25,8 @@ cd ..
 zig build
 ```
 
-\* On Windows, these should be in `C:\Program Files (x86)\GLFW\lib-vc2019\glfw3.lib` and `C:\VulkanSDK\...\Lib\vulkan-1.lib`.
+\* On Windows, these should be in `C:\Program Files (x86)\GLFW\lib-vc2019\glfw3.lib` and `C:\VulkanSDK\[version]\Lib\vulkan-1.lib`.
+On Linux, pkgconfig should be able to find them.
 
 ### Usage
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 usingnamespace @import("utils.zig");
+const log = std.log;
 
 const Allocator = std.mem.Allocator;
 
@@ -18,7 +19,6 @@ pub var enableValidationLayers = true;
 pub var quitSignaled = false;
 
 const sampleCountFlag = .SAMPLE_COUNT_1_BIT;
-const validation = "VK_LAYER_KHRONOS_validation"; //"VK_LAYER_LUNARG_standard_validation";
 fn extendName(comptime name: []const u8) [256]u8 {
     var x = [1]u8{0} ** 256;
     var i: usize = 0;
@@ -103,7 +103,7 @@ const FrameBuffer = struct {
     depthStencilImage: vk.Image = null,
     depthStencilImageView: vk.ImageView = null,
     handle: vez.Framebuffer = null,
-    
+
     fn deinit(self: FrameBuffer, dev: vk.Device) void {
         if (self.handle) |hndl| {
             vez.destroyFramebuffer(dev, self.handle);
@@ -230,7 +230,7 @@ fn createShaderModule(allocator: *Allocator, filename: []const u8, spirv: bool, 
 
         vez.destroyShaderModule(device, shaderModule);
 
-        std.log.err("{}\n", .{infoLog});
+        log.err("{s}\n", .{infoLog});
         return error.CouldNotCompile;
     }
 
@@ -296,22 +296,20 @@ fn props(dev: vk.PhysicalDevice) vk.PhysicalDeviceProperties {
 }
 
 pub fn run(allocator: *Allocator, app: Application) !void {
-    const stdout = std.io.getStdOut().outStream();
-    
+    const stdout = std.io.getStdOut().writer();
+
     callbacks = app.callbacks;
     var availableLayers = try getInstanceLayers(allocator);
     defer availableLayers.deinit();
 
-    // Use glfw to check for Vulkan support.
     if (c.glfwInit() != c.TRUE) {
         return error.CouldNotInitGlfw;
     }
-
     if (c.glfwVulkanSupported() != c.TRUE) {
-        @panic("No Vulkan supported found on system!\n");
+        log.crit("No GLFW-Vulkan support", .{});
+        return;
     }
 
-    // // Initialize a Vulkan instance with the validation availableLayers enabled and extensions required by glfw.
     var instanceExtensionCount: u32 = 0;
     var instanceExtensions = c.glfwGetRequiredInstanceExtensions(&instanceExtensionCount)[0..instanceExtensionCount];
 
@@ -319,10 +317,12 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     defer instanceLayers.deinit();
 
     if (enableValidationLayers) {
-        if (availableLayers.contains(extendName(validation))) {
-            try instanceLayers.append(validation);
+        if (availableLayers.contains(extendName("VK_LAYER_KHRONOS_validation"))) {
+            try instanceLayers.append("VK_LAYER_KHRONOS_validation");
+        } else if (availableLayers.contains(extendName("VK_LAYER_LUNARG_standard_validation"))) {
+            try instanceLayers.append("VK_LAYER_LUNARG_standard_validation");
         } else {
-            return error.NoValidationLayerFound;
+            log.warn("Did not find a Vulkan validation layer.", .{});
         }
     }
 
@@ -351,16 +351,14 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     var physicalDevices = try allocator.alloc(vk.PhysicalDevice, physicalDeviceCount);
     defer allocator.free(physicalDevices);
     try convert(vez.enumeratePhysicalDevices(instance, &physicalDeviceCount, physicalDevices.ptr));
-    
+
     const chosenDevice = 0;
-    if (isDebug) {
-        for (physicalDevices) |pdevice, i| {
-            const name = @ptrCast([*:0]const u8, &props(pdevice).deviceName);
-            if (i == chosenDevice) {
-                try stdout.print("-> {}\n", .{name});
-            } else {
-                try stdout.print("   {}\n", .{name});
-            }
+    for (physicalDevices) |pdevice, i| {
+        const name = @ptrCast([*:0]const u8, &props(pdevice).deviceName);
+        if (i == chosenDevice) {
+            log.debug("-> {s}\n", .{name});
+        } else {
+            log.debug("   {s}\n", .{name});
         }
     }
     physicalDevice = physicalDevices[chosenDevice];
@@ -376,7 +374,7 @@ pub fn run(allocator: *Allocator, app: Application) !void {
     try convert(vez.createDevice(physicalDevice, &deviceCreateInfo, &device));
 
     try app.load();
-    
+
     c.glfwWindowHint(c.CLIENT_API, c.NO_API);
     window = c.glfwCreateWindow(WIDTH, HEIGHT, NAME, null, null) orelse return error.FailedToCreateWindow;
 
@@ -432,7 +430,8 @@ pub fn run(allocator: *Allocator, app: Application) !void {
         if (elapsedTime >= 1.0) {
             const size = getWindowSize();
             const nspp = 1000000000 / frameCount / (size[0] * size[1]);
-            const text = try std.fmt.allocPrintZ(allocator, "{} ({} FPS, {} nspp)", .{ app.name, frameCount, nspp });
+            const text = try std.fmt.allocPrintZ(allocator, "{s} ({} FPS, {} nspp)", .{ app.name, frameCount, nspp });
+            defer allocator.free(text);
             c.glfwSetWindowTitle(window, text.ptr);
             elapsedTime = 0.0;
             frameCount = 0;
@@ -458,7 +457,7 @@ fn shouldQuit() bool {
 }
 
 export fn windowSizeCallback(wndw: ?*c.Window, width: c_int, height: c_int) callconv(.C) void {
-    resize() catch std.log.err("resize() crashed", .{});
+    resize() catch |err| log.err("resize failed: {}", .{err});
 }
 
 pub fn resize() !void {

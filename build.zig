@@ -55,7 +55,7 @@ pub fn build(b: *Builder) void {
         defer vkbase.close();
         // TODO: find newest version
         const first = vkbase.iterate().next() catch unreachable orelse unreachable;
-        
+
         const vkpath = join(b, join(b, "C:/VulkanSDK", first.name), "Lib");
         exe.addLibPath(vkpath);
         exe.linkSystemLibrary("vulkan-1");
@@ -63,8 +63,8 @@ pub fn build(b: *Builder) void {
         const dll = b.addInstallBinFile("./V-EZ/Bin/x86_64/VEZ.dll", "VEZ.dll");
         exe.step.dependOn(&dll.step);
     } else {
-        exe.linkSystemLibrary("libglfw.so.3");
-        exe.linkSystemLibrary("libvulkan.so.1");
+        exe.linkSystemLibrary("glfw");
+        exe.linkSystemLibrary("vulkan");
     }
     exe.install();
 

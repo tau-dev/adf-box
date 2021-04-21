@@ -7,6 +7,7 @@ const Thread = std.Thread;
 const mat = @import("zalgebra");
 const mat4 = mat.mat4;
 const vec = mat.vec3;
+const log = std.log;
 var c_allocator = std.heap.c_allocator;
 
 const roundUp = @import("base.zig").roundUp;
@@ -124,11 +125,11 @@ const Task = struct {
 };
 
 pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
-    const stdout = std.io.getStdOut().outStream();
+    const stdout = std.io.getStdOut().writer();
     var start = std.time.milliTimestamp();
     if (std.mem.endsWith(u8, path, ".adf")) {
         const adf = try load_adf.load(allocator, path);
-        try stdout.print("Loaded {} in {} ms\n", .{ path, std.time.milliTimestamp() - start });
+        log.info("Loaded {s} in {} ms\n", .{ path, std.time.milliTimestamp() - start });
         return adf;
     }
     var m = gen: {
@@ -138,11 +139,11 @@ pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
         }
         verts = try load_ply.load(allocator, path);
         defer allocator.free(verts);
-        try stdout.print("Loaded {} in {} ms\n", .{ path, std.time.milliTimestamp() - start });
+        log.info("Loaded {s} in {} ms\n", .{ path, std.time.milliTimestamp() - start });
 
         start = std.time.milliTimestamp();
         var mdl = try sdfGen(allocator, verts);
-        try stdout.print("Genarated adf in {} ms\n", .{std.time.milliTimestamp() - start});
+        log.info("Genarated adf in {} ms\n", .{std.time.milliTimestamp() - start});
         break :gen mdl;
     };
 
@@ -209,8 +210,8 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
             octree, pixelData);
     }
 
-    try std.io.getStdOut().writer().print(
-        "mid nodes  {}\nleaf nodes {}\n", 
+    log.debug(
+        "mid nodes  {}\nleaf nodes {}\n",
         .{ node_offset, leaf_offset - node_offset});
 
     return SerialModel{
@@ -280,7 +281,7 @@ fn mapValToTexture(tex: []u8, v: [valcount]u8, i: usize) void {
     // black magic index juggling
     const texbase = valres * valwidth * (valres * valres * i / valwidth)
                     + valres * valres * i % valwidth;
-    
+
     var x: usize = 0;
     while (x < valres) : (x += 1) {
         var y: usize = 0;
@@ -344,7 +345,7 @@ fn genChildren(pos: vec, subscale: f32, possible: []Vertex, depth: i32) Construc
                 try midnodes.append(OctNode{});
             }
             const child_p = try construct(possible, depth + 1, subpos, subcenter_value);
-            
+
             midnodes.items[this].children[i] = child_p;
         }
     }

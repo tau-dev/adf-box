@@ -97,7 +97,7 @@ pub fn convert(result: vk.Result) VulkanError!void {
 }
 
 pub fn getInstanceLayers(allocator: *std.mem.Allocator) !NameSet {
-    const stdout = std.io.getStdOut().outStream();
+    const stdout = std.io.getStdOut().writer();
 
     var extensionCount: u32 = 0;
     try convert(vez.enumerateInstanceExtensionProperties(null, &extensionCount, null));
@@ -105,7 +105,7 @@ pub fn getInstanceLayers(allocator: *std.mem.Allocator) !NameSet {
     var extensions = try allocator.alloc(vk.ExtensionProperties, extensionCount);
     defer allocator.free(extensions);
     try convert(vez.enumerateInstanceExtensionProperties(null, &extensionCount, extensions.ptr));
-    
+
     if (isDebug) {
         try stdout.writeAll("Available extensions: ");
         for (extensions) |extension| {
