@@ -56,6 +56,7 @@ const Ref = union(enum) {
 pub const OctNode = struct {
     children: [childcount]Ref = [_]Ref{.none} ** childcount,
     values: [valcount]u8 = [_]u8{0} ** valcount,
+    material: MaterialInfo = 0xff00ff00, // pink for missing material
 };
 
 const Task = struct {
@@ -199,23 +200,19 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
     }
 
     var octree = try allocator.alloc(ChildRefs, node_offset);
+    const material_mem = try allocator.alloc(MaterialInfo, node_offset);
 
     const height = roundUp(@intCast(u32, leaf_offset), texwidth / valres) * valres;
     const pixelData = try allocator.alloc(u8, valwidth * height);
     errdefer allocator.free(pixelData);
 
     linearize(midnodes.items, leaves.items, 0, node_offset,
-        octree, pixelData);
+        octree, material_mem, pixelData);
 
     for (tasks) |p| {
         linearize(p.node_mem.items, p.leaf_mem.items,
             p.node_offset, p.leaf_offset,
-            octree, pixelData);
-    }
-
-    const material_mem = try allocator.alloc(u32, octree.len);
-    for (material_mem) |*m| {
-        m.* = 0x77cc44aa;
+            octree, material_mem, pixelData);
     }
 
     log.debug("\nmid nodes  {}\nleaf nodes {}\n",
@@ -263,6 +260,7 @@ fn linearize(
     node_start: usize,
     leaf_start: usize,
     octree: []ChildRefs,
+    material: []MaterialInfo,
     pixelData: []u8
 ) void {
     const tasks = parallel_tasks.items;
@@ -276,6 +274,7 @@ fn linearize(
                 .none => -1,
             };
         }
+        material[i] = node.material;
         const val = node.values;
         mapValToTexture(pixelData, node.values, i);
     }
@@ -330,11 +329,25 @@ fn construct(vertices: []const Vertex, depth: i32, pos: vec, center_value: f32) 
     switch (this) {
         .leaf_node =>
             try leaves.append(values),
-        .full_node => |f|
-            midnodes.items[f].values = values,
+        .full_node => |f| {
+            midnodes.items[f].values = values;
+            midnodes.items[f].material = vecToRgba(vec.one().sub(pos));//0x77cc44aa;
+        },
         else => {}
     }
     return this;
+}
+
+fn vecToRgba(v: vec) u32 {
+    const assert = std.debug.assert;
+    const r = @floatToInt(u32, v.x * 255);
+    assert(r < 256);
+    const g = @floatToInt(u32, v.y * 255);
+    assert(g < 256);
+    const b = @floatToInt(u32, v.z * 255);
+    assert(b < 256);
+    const a = @as(u32, 128);
+    return (r << 24) + (g << 16) + (b << 8) + a;
 }
 
 fn genChildren(pos: vec, subscale: f32, possible: []const Vertex, depth: i32) ConstructError!Ref {
@@ -358,10 +371,10 @@ fn genChildren(pos: vec, subscale: f32, possible: []const Vertex, depth: i32) Co
             midnodes.items[this].children[i] = child_p;
         }
     }
-    if (!has_children) {
-        return Ref{ .leaf_node = leaves.items.len };
-    } else {
+    if (has_children) {
         return Ref{ .full_node = this };
+    } else {
+        return Ref{ .leaf_node = leaves.items.len };
     }
 }
 

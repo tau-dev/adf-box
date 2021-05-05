@@ -185,7 +185,6 @@ pub fn draw() !void {
 }
 
 pub fn onResize(width: u32, height: u32) !void {
-    log.info("resized", .{});
     renderTexture.deinit(base.getDevice());
     try createRenderTexture();
     vez.freeCommandBuffers(base.getDevice(), 1, &commandBuffer);

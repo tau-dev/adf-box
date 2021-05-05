@@ -8,7 +8,7 @@ fn join(builder: *Builder, a: []const u8, b: []const u8) []const u8 {
 
 pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
-    const mode = .ReleaseFast; //b.standardReleaseOptions();
+    const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("adf-box", "src/main.zig");
 

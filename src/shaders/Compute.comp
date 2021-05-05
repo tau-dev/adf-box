@@ -122,8 +122,8 @@ vec4 uintToRgba(uint x) {
     return vec4(r, g, b, a) / 256;
 }
 
-void shade(ivec2 pospx, float brightness, vec3 normal) {
-    imageStore(dest, pospx, vec4(brightness - normal.y*0.05 + 0.05) * uintToRgba(materialData[last_index]));
+void shade(ivec2 pospx, float brightness, vec3 normal, uint mat_index) {
+    imageStore(dest, pospx, vec4(brightness - normal.y*0.05 + 0.05) * uintToRgba(materialData[mat_index]));
 }
 
 void main()
@@ -149,13 +149,14 @@ void main()
         prox = interpol_world(pos);
         pos += dir * prox;
     }
+    uint mat_index = last_index;
 
     dir = normalize(light.xyz - pos);
     vec3 normal = normalize(gradient(pos, 0.001));
     pos += dir * margin * 10;
     float angle = dot(dir, normal);
     if (angle < 0) {
-        shade(pospx, 0.0, normal);
+        shade(pospx, 0.0, normal, mat_index);
         return;
     }
     float dist = length(light.xyz - pos) / 2;
@@ -163,12 +164,12 @@ void main()
     for (int i = 0; (prox > -margin) && i < 40; i++) {
         if (prox > dist || any(lessThan(pos, vec3(0))) || any(greaterThan(pos, vec3(1)))) {
             float attenuation = angle / (dist*dist) *  (exp2(intensity) - 1);
-            shade(pospx, attenuation, normal);
+            shade(pospx, attenuation, normal, mat_index);
             return;
         }
         //find(pos);
         prox = interpol_world(pos);
         pos += dir * prox;// * (1 - inf.margin);
     }
-    shade(pospx, 0.0, normal);
+    shade(pospx, 0.0, normal, mat_index);
 }

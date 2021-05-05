@@ -4,8 +4,10 @@ const Writer = std.fs.File.Writer;
 const Reader = std.fs.File.Reader;
 const Allocator = mem.Allocator;
 
-const SerialModel = @import("model.zig").SerialModel;
-const ChildRefs = @import("model.zig").ChildRefs;
+const Model = @import("model.zig");
+const SerialModel = Model.SerialModel;
+const ChildRefs = Model.ChildRefs;
+const MaterialInfo = Model.MaterialInfo;
 
 const magic = "asdf-box";
 const version = "0.1.0";
@@ -29,17 +31,19 @@ pub fn load(allocator: *Allocator, filename: []const u8) !SerialModel {
 
     model.tree = try allocator.alloc(ChildRefs, treelength);
     errdefer allocator.free(model.tree);
+    model.material = try allocator.alloc(MaterialInfo, treelength);
+    errdefer allocator.free(model.material);
 
-    const serialized = @ptrCast([*]u8, model.tree.ptr)[0 .. treelength * @sizeOf(ChildRefs)];
-    const read_count = try reader.readAll(serialized);
-    if (read_count != serialized.len)
-        return error.FormatInvalid;
+    try reader.readNoEof(mem.sliceAsBytes(model.tree));
+    try reader.readNoEof(mem.sliceAsBytes(model.material));
 
-    var i: usize = 0;
-    while (i < treelength) : (i += 1) {
-        for (model.tree[i]) |*ref| {
-            ref.* = mem.littleToNative(i32, ref.*);
+    for (model.tree) |*node| {
+        for (node.*) |*v| {
+            v.* = mem.littleToNative(i32, v.*);
         }
+    }
+    for (model.material) |*mat| {
+        mat.* = mem.littleToNative(u32, mat.*);
     }
 
     model.values = try allocator.alloc(u8, model.width * model.height * @import("model.zig").valres);
@@ -68,16 +72,22 @@ pub fn save(model: SerialModel, filename: []const u8) !void {
             v.* = mem.nativeToLittle(i32, v.*);
         }
     }
+    for (model.material) |*mat| {
+        mat.* = mem.nativeToLittle(u32, mat.*);
+    }
     defer {
         for (model.tree) |*node| {
             for (node.*) |*v| {
                 v.* = mem.littleToNative(i32, v.*);
             }
         }
+        for (model.material) |*mat| {
+            mat.* = mem.littleToNative(u32, mat.*);
+        }
     }
 
-    const serialized = @ptrCast([*]u8, model.tree.ptr)[0 .. model.tree.len * @sizeOf(ChildRefs)];
-    try writer.writeAll(serialized);
+    try writer.writeAll(mem.sliceAsBytes(model.tree));
+    try writer.writeAll(mem.sliceAsBytes(model.material));
     try writer.writeAll(model.values);
 }
 
