@@ -22,6 +22,7 @@ pub fn load(allocator: *Allocator, filename: []const u8) !SerialModel {
     var model = SerialModel{
         .tree = undefined,
         .values = undefined,
+        .material = undefined,
         .width = @intCast(u32, try reader.readIntLittle(i32)),
         .height = @intCast(u32, try reader.readIntLittle(i32)),
     };

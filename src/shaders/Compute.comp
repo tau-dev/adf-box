@@ -23,10 +23,15 @@ layout(binding = 0) uniform restrict readonly UniformBufferObject
 layout(binding = 1) restrict readonly buffer octDataBuffer {
 	int octData[];
 };
-layout(binding = 2) uniform sampler2D values;
+layout(binding = 2) restrict readonly buffer materialBuffer {
+	uint materialData[];
+};
+
 layout(binding = 3) uniform restrict writeonly image2D dest;
+layout(binding = 4) uniform sampler2D values;
 
 int index = 0;
+int last_index = 0;
 vec2 dimfactor;
 
 vec3 lower = vec3(0, 0, 0);
@@ -93,6 +98,7 @@ void find(vec3 pos)
         const int next = octData[index * 8 + p];
         if (next < 0)
             return;
+        last_index = index;
         index = next;
         scale_down(dir);
     }
@@ -105,9 +111,20 @@ vec3 ray(ivec2 coord, vec2 destsize)
 	return normalize(dir.xyz);
 }
 
+vec4 uintToRgba(uint x) {
+    float a = x % 256;
+    x /= 256;
+    float b = x % 256;
+    x /= 256;
+    float g = x % 256;
+    x /= 256;
+    float r = x;
+    return vec4(r, g, b, a) / 256;
+}
+
 void shade(ivec2 pospx, float brightness, vec3 normal) {
-    imageStore(dest, pospx, vec4(brightness - normal.y*0.05 + 0.05));
-} 
+    imageStore(dest, pospx, vec4(brightness - normal.y*0.05 + 0.05) * uintToRgba(materialData[last_index]));
+}
 
 void main()
 {

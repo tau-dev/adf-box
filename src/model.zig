@@ -10,7 +10,7 @@ const vec = mat.vec3;
 const log = std.log;
 var c_allocator = std.heap.c_allocator;
 
-const roundUp = @import("base.zig").roundUp;
+const roundUp = @import("main.zig").roundUp;
 
 const load_ply = @import("load_ply.zig");
 const load_adf = @import("load_adf.zig");
@@ -30,15 +30,18 @@ pub var max_depth: u32 = 5;
 const padding = 0.1;
 
 pub const ChildRefs = [childcount]i32;
+pub const MaterialInfo = u32;
 
 pub const SerialModel = struct {
     tree: []ChildRefs,
     values: []u8,
+    material: []MaterialInfo,
     width: u32,
     height: u32,
 
     pub fn deinit(self: @This(), allocator: *Allocator) void {
         allocator.free(self.tree);
+        allocator.free(self.material);
         allocator.free(self.values);
     }
 };
@@ -76,8 +79,8 @@ const Task = struct {
         vertex_mem_ref: []Vertex,
     };
 
-    fn launch(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) !Self {
-        var allocator = c_allocator;
+    fn launch(vertices: []const Vertex, depth: i32, pos: vec, center_value: f32) !Self {
+        const allocator = c_allocator;
         var self = Self{
             .handle = undefined,
             .node_mem = try allocator.create(ArrayList(OctNode)),
@@ -143,7 +146,7 @@ pub fn load(allocator: *Allocator, path: []const u8) !SerialModel {
 
         start = std.time.milliTimestamp();
         var mdl = try sdfGen(allocator, verts);
-        log.info("Genarated adf in {} ms\n", .{std.time.milliTimestamp() - start});
+        log.info("Generated adf in {} ms\n", .{std.time.milliTimestamp() - start});
         break :gen mdl;
     };
 
@@ -210,13 +213,19 @@ pub fn sdfGen(allocator: *Allocator, vertices: []Vertex) !SerialModel { // (Vert
             octree, pixelData);
     }
 
-    log.debug(
-        "mid nodes  {}\nleaf nodes {}\n",
-        .{ node_offset, leaf_offset - node_offset});
+    const material_mem = try allocator.alloc(u32, octree.len);
+    for (material_mem) |*m| {
+        m.* = 0x77cc44aa;
+    }
+
+    log.debug("\nmid nodes  {}\nleaf nodes {}\n",
+        .{ node_offset, leaf_offset - node_offset}
+    );
 
     return SerialModel{
         .tree = octree,
         .values = pixelData,
+        .material = material_mem,
         .width = texwidth,
         .height = height,
     };
@@ -299,7 +308,7 @@ fn mapValToTexture(tex: []u8, v: [valcount]u8, i: usize) void {
 const ConstructError = Allocator.Error || Thread.SpawnError;
 threadlocal var forked = false; // this is disgusting
 
-fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) ConstructError!Ref {
+fn construct(vertices: []const Vertex, depth: i32, pos: vec, center_value: f32) ConstructError!Ref {
     if (depth == fork_depth and !forked) {
         try parallel_tasks.append(try Task.launch(vertices, depth, pos, center_value));
         return Ref{ .parallel_result = parallel_tasks.items.len - 1 };
@@ -328,7 +337,7 @@ fn construct(vertices: []Vertex, depth: i32, pos: vec, center_value: f32) Constr
     return this;
 }
 
-fn genChildren(pos: vec, subscale: f32, possible: []Vertex, depth: i32) ConstructError!Ref {
+fn genChildren(pos: vec, subscale: f32, possible: []const Vertex, depth: i32) ConstructError!Ref {
     var has_children = false;
     var this: usize = 0;
     var i: usize = 0;
@@ -375,7 +384,7 @@ fn splitChildIndex(i: usize) vec {
 threadlocal var possibleBuffer: []Vertex = undefined;
 threadlocal var possibleCount: usize = 0;
 
-fn getPossible(p: vec, minDistance: f32, possible: []Vertex) []Vertex {
+fn getPossible(p: vec, minDistance: f32, possible: []const Vertex) []const Vertex {
     const start = possibleCount;
     var minSquared = minDistance; // * global_scale;
     minSquared *= minSquared;
@@ -389,7 +398,7 @@ fn getPossible(p: vec, minDistance: f32, possible: []Vertex) []Vertex {
     }
     return possibleBuffer[start..possibleCount];
 }
-fn trueDistanceAt(p: vec, vertices: []Vertex) f32 {
+fn trueDistanceAt(p: vec, vertices: []const Vertex) f32 {
     var minDistance = math.inf(f32);
 
     for (vertices) |v| {
@@ -409,7 +418,7 @@ fn trueDistanceAt(p: vec, vertices: []Vertex) f32 {
 const from: f32 = -1;
 const to: f32 = 3;
 
-fn discreteDistances(pos: vec, scale: f32, possible: []Vertex) [valcount]u8 {
+fn discreteDistances(pos: vec, scale: f32, possible: []const Vertex) [valcount]u8 {
     var res: [valcount]u8 = undefined;
     for (res) |*r, i| {
         const value = distanceAt(pos.add(splitValueIndex(i).scale(scale)), possible);
@@ -420,7 +429,7 @@ fn discreteDistances(pos: vec, scale: f32, possible: []Vertex) [valcount]u8 {
     return res;
 }
 
-fn distanceAt(p: vec, vertices: []Vertex) f32 {
+fn distanceAt(p: vec, vertices: []const Vertex) f32 {
     var closest: Vertex = undefined;
     var minDistance = math.inf(f32);
 
